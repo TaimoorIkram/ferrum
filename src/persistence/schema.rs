@@ -1,5 +1,6 @@
 use std::fmt::Display;
 
+#[derive(Clone)]
 pub enum DataType {
     Number,
     Text,
@@ -15,6 +16,7 @@ impl Display for DataType {
     }
 }
 
+#[derive(Clone)]
 pub struct ColumnInformation {
     pub(super) datatype: DataType,
     pub(super) max_limit: Option<usize>,
