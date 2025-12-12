@@ -9,6 +9,11 @@ pub struct Table {
     rows: Arc<RwLock<Vec<Row>>>,
 }
 
+pub struct TableReader {
+    pub schema: Arc<Schema>,
+    pub rows: Arc<RwLock<Vec<Row>>>,
+}
+
 impl Table {
     pub fn from(columns: Vec<(String, String)>) -> Result<Table, String> {
         //! Return a new table with the said schema. The `columns` is a string mapping
@@ -83,6 +88,19 @@ impl Table {
         self.rows.write().unwrap().push(Row(row.clone()));
         Ok(Row(row))
     }
+
+    pub fn reader(&self) -> TableReader {
+        //! Get a reader for the table to perform read queries.
+        //!
+        //! Creates asynchronous copies of the schema and rows so
+        //! multiple reads can be performed also enabling a locked
+        //! write.
+
+        TableReader {
+            schema: Arc::clone(&self.schema),
+            rows: Arc::clone(&self.rows),
+        }
+    }
 }
 
 impl Display for Table {
@@ -96,5 +114,27 @@ impl Display for Table {
             .collect();
 
         writeln!(f, "{}\n{}", self.schema, rows.join("\n"))
+    }
+}
+
+impl TableReader {
+    pub fn scan(&self) -> Vec<Row> {
+        //! Returns a copy of all the rows of the table, so the read is not locked anymore.
+
+        let rows = self.rows.read().unwrap();
+        rows.clone()
+    }
+
+    pub fn filter<F>(&self, filter: F) -> Vec<Row>
+    where
+        F: Fn(&Row) -> bool,
+    {
+        //! Runs a filter over the read only rows and clones the ones matching
+        //! the filter criteria
+        //! 
+        //! Returns a [Clone] of the matching rows in the original table.
+        
+        let rows = self.rows.read().unwrap();
+        rows.iter().filter(|row| filter(*row)).cloned().collect()
     }
 }
