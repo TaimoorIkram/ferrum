@@ -8,3 +8,7 @@
 mod table;
 mod row;
 mod schema;
+
+//  External API
+pub use table::Table;
+pub use row::Row;
