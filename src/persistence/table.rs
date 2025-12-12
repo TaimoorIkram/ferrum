@@ -125,7 +125,7 @@ impl TableReader {
         rows.clone()
     }
 
-    pub fn filter<F>(&self, filter: F) -> Vec<Row>
+    pub fn filter<F>(self, filter: F) -> Result<TableReader, String>
     where
         F: Fn(&Row) -> bool,
     {
@@ -135,6 +135,11 @@ impl TableReader {
         //! Returns a [Clone] of the matching rows in the original table.
         
         let rows = self.rows.read().unwrap();
-        rows.iter().filter(|row| filter(*row)).cloned().collect()
+        let rows = rows.iter().filter(|row| filter(*row)).cloned().collect();
+
+        Ok(TableReader {
+            schema: self.schema,
+            rows: Arc::new(RwLock::new(rows)),
+        })
     }
 }
