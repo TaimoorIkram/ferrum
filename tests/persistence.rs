@@ -86,7 +86,7 @@ mod table {
             Some(Some(value)) => value.parse::<u32>().unwrap() >= 2,
             _ => false,
         };
-        let rows = reader.filter(filter);
+        let rows = reader.filter(filter).unwrap().scan();
 
         assert_eq!(rows.len(), 3);
 
@@ -108,7 +108,7 @@ mod table {
                 .as_ref()
                 .and_then(|s| s.parse::<u32>().ok())
                 .map_or(false, |id| id > 100)
-        });
+        }).unwrap().scan();
 
         assert_eq!(rows.len(), 0);
     }
@@ -120,8 +120,52 @@ mod table {
         table.insert(vec!["1".to_string()]).unwrap();
 
         let reader = table.reader();
-        let rows = reader.filter(|row| row.0[0].is_some());
+        let rows = reader.filter(|row| row.0[0].is_some()).unwrap().scan();
 
         assert_eq!(rows.len(), 1);
+    }
+
+    #[test]
+    fn table_reader_select_single_column() {
+        let table = _create_table(vec![("id", "num"), ("name", "txt")]).unwrap();
+        let values = vec![
+            ("1", "Jansen"),
+            ("2", "Bonega"),
+            ("3", "Maharashtra"),
+            ("4", "Lorem"),
+        ];
+
+        for (id, name) in values.iter().to_owned() {
+            if let Err(message) = table.insert(vec![id.to_string(), name.to_string()]) {
+                println!("err: {}", message);
+            }
+        }
+
+        let reader = table.reader();
+        let ids_only = reader.select(vec!["id".to_string()]).unwrap();
+
+        for (row, (id, _)) in ids_only.scan().iter().zip(values) {
+            assert_eq!(row.0.get(0).unwrap().as_deref(), Some(id))
+        }
+    }
+
+    #[test]
+    fn table_reader_select_multiple_columns() {
+        let table = _create_table(vec![("id", "num"), ("name", "txt"), ("age", "num")]).unwrap();
+
+        table
+            .insert(vec!["1".to_string(), "Alice".to_string(), "30".to_string()])
+            .unwrap();
+
+        let reader = table.reader();
+        let selected = reader
+            .select(vec!["name".to_string(), "id".to_string()])
+            .unwrap();
+
+        let results = selected.scan();
+
+        // Schema should be reordered: name, id (not id, name)
+        assert_eq!(results[0].0[0].as_ref().unwrap(), "Alice");
+        assert_eq!(results[0].0[1].as_ref().unwrap(), "1");
     }
 }

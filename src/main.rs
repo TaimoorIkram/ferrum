@@ -42,6 +42,13 @@ fn main() {
             }
         }
 
-        println!("{}", table)
+        let id_only = table.reader().select(vec![
+            "id".to_string(),
+            "name".to_string()
+        ]).unwrap();
+
+        for row in id_only.scan().iter() {
+            println!("{}", row);
+        }
     }
 }
