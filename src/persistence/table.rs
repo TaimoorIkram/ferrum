@@ -131,14 +131,50 @@ impl TableReader {
     {
         //! Runs a filter over the read only rows and clones the ones matching
         //! the filter criteria
-        //! 
+        //!
         //! Returns a [Clone] of the matching rows in the original table.
-        
+
         let rows = self.rows.read().unwrap();
         let rows = rows.iter().filter(|row| filter(*row)).cloned().collect();
 
         Ok(TableReader {
             schema: self.schema,
+            rows: Arc::new(RwLock::new(rows)),
+        })
+    }
+
+    pub fn select(self, fields: Vec<String>) -> Result<TableReader, String> {
+        //! Get specific columns from the table and return that table.
+        //!
+        //! Returns a table [`TableReader`] object as a projection of the current
+        //! reader.
+
+        let indices: Vec<usize> = fields
+            .iter()
+            .map(|field| {
+                self.schema
+                    .0
+                    .iter()
+                    .position(|(name, _)| name == field)
+                    .expect(format!("invalid column {}: does not exist", field).as_str())
+            })
+            .collect();
+
+        let schema: Schema = Schema(
+            indices
+                .iter()
+                .map(|&index| self.schema.0[index].clone())
+                .collect(),
+        );
+
+        let rows = self.rows.read().unwrap();
+        let rows = rows
+            .iter()
+            .map(|row| Row(indices.iter().map(|&index| row.0[index].clone()).collect()))
+            .collect();
+
+        Ok(TableReader {
+            schema: Arc::new(schema),
             rows: Arc::new(RwLock::new(rows)),
         })
     }
