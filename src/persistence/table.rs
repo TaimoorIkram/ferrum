@@ -89,6 +89,33 @@ impl Table {
         Ok(Row(row))
     }
 
+    pub fn insert_many(&self, values: Vec<Vec<String>>) -> Result<usize, String> {
+        //! Bulk insert operation, uses the same insert function inside it.
+        //! 
+        //! Returns the total number of successful entries
+        //!
+        //! Insertion is not transactional! Error during insertion stops the
+        //! insertions after it, but keeps the ones prior.
+        //! 
+        //! In the future, multi-threading may help speed up the working of
+        //! this function.
+
+        let mut rows = Vec::with_capacity(values.len());
+        let mut n_insertions = 0;
+
+        for row in values {
+            match self.insert(row) {
+                Ok(row) => {
+                    n_insertions += 1;
+                    rows.push(row)
+                },
+                Err(msg) => return Err(msg),
+            }
+        }
+
+        Ok(n_insertions)
+    }
+
     pub fn reader(&self) -> TableReader {
         //! Get a reader for the table to perform read queries.
         //!

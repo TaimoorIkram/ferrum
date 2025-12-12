@@ -168,4 +168,33 @@ mod table {
         assert_eq!(results[0].0[0].as_ref().unwrap(), "Alice");
         assert_eq!(results[0].0[1].as_ref().unwrap(), "1");
     }
+
+    #[test]
+    fn table_insert_many_noerror() {
+        let table = _create_table(vec![("id", "num"), ("name", "txt")]).unwrap();
+        let values = vec![
+            ("1", "Jansen"),
+            ("2", "Bonega"),
+            ("3", "Maharashtra"),
+            ("4", "Lorem"),
+        ].iter().map(|(id, name)| vec![id.to_string(), name.to_string()]).collect();
+
+        let num_insertions = table.insert_many(values);
+        assert_eq!(num_insertions.unwrap(), 4);
+    }
+
+    #[test]
+    fn table_insert_many_error() {
+        let table = _create_table(vec![("id", "num"), ("name", "txt")]).unwrap();
+        let values = vec![
+            ("1", "Jansen"),
+            ("2", "Bonega"),
+            ("3", "Maharashtra"),
+            ("x", "Lorem"),
+        ].iter().map(|(id, name)| vec![id.to_string(), name.to_string()]).collect();
+
+        // will fail because err is unwrapped
+        let _num_insertions = table.insert_many(values);
+        assert_eq!(table.reader().scan().len(), 3);
+    }
 }
