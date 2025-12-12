@@ -3,3 +3,8 @@
 //! - Row (based on a Schema, fixed per table, only one write and many reads)
 //! - Table (made of many Rows, multi-threadable)
 //!
+
+//  All modules of this lib
+mod table;
+mod row;
+mod schema;
