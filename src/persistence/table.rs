@@ -38,7 +38,7 @@ impl Table {
                     return Err(format!(
                         "invalid datatype {}: not supported, on column {}",
                         other, column
-                    ))
+                    ));
                 }
             };
             schema.push((column.clone(), col_info));
@@ -107,7 +107,7 @@ impl Display for Table {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         let rows: Vec<String> = self
             .rows
-            .write()
+            .read()
             .unwrap()
             .iter()
             .map(|row| format!("{}", row))
