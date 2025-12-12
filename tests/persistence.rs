@@ -1,0 +1,127 @@
+#[cfg(test)]
+mod table {
+    use ferrum_engine::persistence::{Row, Table};
+
+    fn _create_table(columns: Vec<(&str, &str)>) -> Result<Table, String> {
+        Table::from(
+            columns
+                .iter()
+                .map(|(id, datatype)| (id.to_string(), datatype.to_string()))
+                .collect(),
+        )
+    }
+
+    #[test]
+    fn table_creates_with_proper_types() {
+        let columns = vec![("id", "num"), ("name", "txt")];
+
+        _create_table(columns).unwrap();
+    }
+
+    #[test]
+    #[should_panic]
+    fn table_does_not_create_with_improper_types() {
+        let columns = vec![("id", "num"), ("name", "flt")];
+
+        _create_table(columns).unwrap();
+    }
+
+    #[test]
+    fn table_reader_scan_nonempty() {
+        let table = _create_table(vec![("id", "num"), ("name", "txt")]).unwrap();
+        let values = vec![
+            ("1", "Jansen"),
+            ("2", "Bonega"),
+            ("3", "Maharashtra"),
+            ("4", "Lorem"),
+        ];
+
+        for (id, name) in values.iter().to_owned() {
+            if let Err(message) = table.insert(vec![id.to_string(), name.to_string()]) {
+                println!("err: {}", message);
+            }
+        }
+
+        let reader = table.reader();
+        let rows = reader.scan();
+
+        assert_eq!(rows.len(), 4);
+
+        let check_name = "Jansen".to_string();
+        assert_eq!(
+            rows.get(0).unwrap().0.get(1).unwrap().as_ref(),
+            Some(&check_name)
+        );
+    }
+
+    #[test]
+    fn table_reader_scan_empty() {
+        let table = _create_table(vec![("id", "num"), ("name", "txt")]).unwrap();
+        let reader = table.reader();
+        let rows = reader.scan();
+
+        assert_eq!(rows.len(), 0);
+    }
+
+    #[test]
+    fn table_reader_filter_nonempty() {
+        let table = _create_table(vec![("id", "num"), ("name", "txt")]).unwrap();
+        let values = vec![
+            ("1", "Jansen"),
+            ("2", "Bonega"),
+            ("3", "Maharashtra"),
+            ("4", "Lorem"),
+        ];
+
+        for (id, name) in values.iter().to_owned() {
+            if let Err(message) = table.insert(vec![id.to_string(), name.to_string()]) {
+                println!("err: {}", message);
+            }
+        }
+
+        let reader = table.reader();
+
+        // filtering all items with id >= 2 (should be 3 rows id 2, 3, and 4)
+        let filter = |row: &Row| match row.0.get(0) {
+            Some(Some(value)) => value.parse::<u32>().unwrap() >= 2,
+            _ => false,
+        };
+        let rows = reader.filter(filter);
+
+        assert_eq!(rows.len(), 3);
+
+        let check_name = "Bonega".to_string();
+        assert_eq!(
+            rows.get(0).unwrap().0.get(1).unwrap().as_ref(),
+            Some(&check_name),
+        );
+    }
+
+    #[test]
+    fn table_reader_filter_returns_empty() {
+        let table = _create_table(vec![("id", "num")]).unwrap();
+        table.insert(vec!["1".to_string()]).unwrap();
+
+        let reader = table.reader();
+        let rows = reader.filter(|row| {
+            row.0[0]
+                .as_ref()
+                .and_then(|s| s.parse::<u32>().ok())
+                .map_or(false, |id| id > 100)
+        });
+
+        assert_eq!(rows.len(), 0);
+    }
+
+    #[test]
+    fn table_reader_filter_handles_null_values() {
+        let table = _create_table(vec![("id", "num")]).unwrap();
+        // table.insert(vec!["".to_string()]).unwrap(); // NULL value
+        table.insert(vec!["1".to_string()]).unwrap();
+
+        let reader = table.reader();
+        let rows = reader.filter(|row| row.0[0].is_some());
+
+        assert_eq!(rows.len(), 1);
+    }
+}
