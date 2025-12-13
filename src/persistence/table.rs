@@ -15,6 +15,58 @@ pub struct TableReader {
 }
 
 impl Table {
+    // TODO: try improving this guy
+    fn _validate_data(&self, data: Vec<String>) -> Result<Row, String> {
+        //! Validate the row with respect to the schema.
+        //!
+        //! Returns the row if the data is correct.
+
+        if data.len() != self.schema.0.len() {
+            return Err(format!(
+                "invalid data: schema has {} column(s), but {} were provided",
+                self.schema.0.len(),
+                data.len(),
+            ));
+        }
+
+        let mut row: Vec<Option<String>> = Vec::new();
+
+        for (item, (col_name, col_info)) in data.into_iter().zip(&self.schema.0) {
+            if item.is_empty() && col_info.nullable {
+                row.push(None);
+            } else if item.is_empty() && !col_info.nullable {
+                return Err(format!(
+                    "invalid NULL: empty strings not allowed on columm '{}'",
+                    col_name
+                ));
+            } else {
+                match col_info.datatype {
+                    DataType::Number => {
+                        if item.parse::<u64>().is_err() {
+                            return Err(format!(
+                                "invalid {}: value not allowed on column '{}' ({})",
+                                item, col_name, col_info.datatype
+                            ));
+                        }
+                    }
+                    DataType::Text => {
+                        if let Some(max_limit) = col_info.max_limit {
+                            if item.len() > max_limit {
+                                return Err(format!(
+                                    "invalid {}: value not allowed on column '{}' ({})",
+                                    item, col_name, col_info.datatype
+                                ));
+                            }
+                        }
+                    }
+                }
+                row.push(Some(item));
+            }
+        }
+
+        Ok(Row(row))
+    }
+
     pub fn from(columns: Vec<(String, String)>) -> Result<Table, String> {
         //! Return a new table with the said schema. The `columns` is a string mapping
         //! of column names and their datatypes.
@@ -50,67 +102,33 @@ impl Table {
         Ok(Table { schema, rows })
     }
 
-    pub fn insert(&self, values: Vec<String>) -> Result<Row, String> {
+    pub fn insert(&self, data: Vec<String>) -> Result<Row, String> {
         //! Basic insert function that inserts a row of values by matching their data-
         //! types and nullability.
         //!
         //! Returns a [Result<Row, String>] containing a copy of the row inserted.
 
-        let mut row = Vec::new();
-
-        for (index, value) in values.iter().enumerate() {
-            let col_info = &self.schema.at(index).1;
-            match col_info.datatype {
-                DataType::Number => {
-                    if value.parse::<i32>().is_err() {
-                        if !col_info.nullable {
-                            return Err(
-                                format! {"invalid value {}: not compatible with type {}", value, col_info.datatype},
-                            );
-                        }
-                        return Err(
-                            format! {"invalid value {}: not compatible with type {}", value, col_info.datatype},
-                        );
-                    }
-                }
-                DataType::Text => {
-                    if let Some(max_limit) = col_info.max_limit {
-                        if value.len() > max_limit {
-                            return Err(format! {"long value {}: limit is {}", value, max_limit});
-                        }
-                    }
-                }
-            }
-
-            row.push(Some(value.clone()));
-        }
-
-        self.rows.write().unwrap().push(Row(row.clone()));
-        Ok(Row(row))
+        let row = self._validate_data(data)?;
+        self.rows.write().unwrap().push(row.clone());
+        Ok(row)
     }
 
     pub fn insert_many(&self, values: Vec<Vec<String>>) -> Result<usize, String> {
         //! Bulk insert operation, uses the same insert function inside it.
-        //! 
+        //!
         //! Returns the total number of successful entries
         //!
         //! Insertion is not transactional! Error during insertion stops the
         //! insertions after it, but keeps the ones prior.
-        //! 
+        //!
         //! In the future, multi-threading may help speed up the working of
         //! this function.
 
-        let mut rows = Vec::with_capacity(values.len());
         let mut n_insertions = 0;
 
-        for row in values {
-            match self.insert(row) {
-                Ok(row) => {
-                    n_insertions += 1;
-                    rows.push(row)
-                },
-                Err(msg) => return Err(msg),
-            }
+        for value in values {
+            self.insert(value)?;
+            n_insertions += 1;
         }
 
         Ok(n_insertions)
