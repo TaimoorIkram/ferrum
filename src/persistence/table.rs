@@ -8,7 +8,6 @@ use std::sync::{Arc, RwLock};
 pub struct Table {
     schema: Arc<Schema>,
     rows: Arc<RwLock<Vec<Row>>>,
-    row_count: Arc<RwLock<usize>>,
 }
 
 pub struct TableReader {
@@ -24,7 +23,7 @@ impl Table {
         //! Returns a cloned value of row count, may behave differently
         //! for multi-threaded system.
 
-        self.row_count.read().unwrap().clone()
+        self.rows.read().unwrap().len()
     }
 }
 
@@ -125,13 +124,8 @@ impl Table {
 
         let schema = Arc::new(Schema(schema));
         let rows = Arc::new(RwLock::new(Vec::with_capacity(n_columns)));
-        let row_count = Arc::new(RwLock::new(0));
 
-        Ok(Table {
-            schema,
-            rows,
-            row_count,
-        })
+        Ok(Table { schema, rows })
     }
 
     pub fn insert(&self, data: Vec<String>) -> Result<Row, String> {
@@ -142,7 +136,6 @@ impl Table {
 
         let row = self._validate_data(data)?;
         self.rows.write().unwrap().push(row.clone());
-        *self.row_count.write().unwrap() += 1;
         Ok(row)
     }
 
@@ -172,7 +165,7 @@ impl Table {
         //!
         //! Returns a boolean for the number of columns updated.
 
-        let row_count = self.row_count.read().unwrap().clone();
+        let row_count = self.rows();
         if pk > row_count {
             return Err(format!("invalid pk: total {} rows", row_count));
         }
@@ -191,8 +184,7 @@ impl Table {
 
             let (_, col_info) = &self.schema.0[index];
 
-            let validated_value =
-                self._validate_field(col_data, &col_name, col_info)?;
+            let validated_value = self._validate_field(col_data, &col_name, col_info)?;
 
             row[index] = validated_value;
             col_updated += 1;
