@@ -7,6 +7,7 @@ use std::sync::{Arc, RwLock};
 pub struct Table {
     schema: Arc<Schema>,
     rows: Arc<RwLock<Vec<Row>>>,
+    row_count: Arc<RwLock<usize>>,
 }
 
 pub struct TableReader {
@@ -14,6 +15,19 @@ pub struct TableReader {
     pub rows: Arc<RwLock<Vec<Row>>>,
 }
 
+// Table field methods
+impl Table {
+    pub fn rows(&self) -> usize {
+        //! Get the total number of rows as of the time of this call.
+        //! 
+        //! Returns a cloned value of row count, may behave differently
+        //! for multi-threaded system.
+        
+        self.row_count.read().unwrap().clone()
+    }
+}
+
+// Table functionalities
 impl Table {
     // TODO: try improving this guy
     fn _validate_data(&self, data: Vec<String>) -> Result<Row, String> {
@@ -98,8 +112,13 @@ impl Table {
 
         let schema = Arc::new(Schema(schema));
         let rows = Arc::new(RwLock::new(Vec::with_capacity(n_columns)));
+        let row_count = Arc::new(RwLock::new(0));
 
-        Ok(Table { schema, rows })
+        Ok(Table {
+            schema,
+            rows,
+            row_count,
+        })
     }
 
     pub fn insert(&self, data: Vec<String>) -> Result<Row, String> {
@@ -110,6 +129,7 @@ impl Table {
 
         let row = self._validate_data(data)?;
         self.rows.write().unwrap().push(row.clone());
+        *self.row_count.write().unwrap() += 1;
         Ok(row)
     }
 

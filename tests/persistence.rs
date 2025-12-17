@@ -197,4 +197,18 @@ mod table {
         let _num_insertions = table.insert_many(values);
         assert_eq!(table.reader().scan().len(), 3);
     }
+
+    #[test]
+    fn table_insert_row_count() {
+        let table = _create_table(vec![("id", "num"), ("name", "txt")]).unwrap();
+        let values = vec![
+            ("1", "Jansen"),
+            ("2", "Bonega"),
+            ("3", "Maharashtra"),
+            ("4", "Lorem"),
+        ].iter().map(|(id, name)| vec![id.to_string(), name.to_string()]).collect();
+
+        let _num_insertions = table.insert_many(values);
+        assert_eq!(table.rows(), 4);
+    }
 }
