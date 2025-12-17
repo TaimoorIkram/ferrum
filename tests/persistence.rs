@@ -1,5 +1,7 @@
 #[cfg(test)]
 mod table {
+    use std::collections::HashMap;
+
     use ferrum_engine::persistence::{Row, Table};
 
     fn _create_table(columns: Vec<(&str, &str)>) -> Result<Table, String> {
@@ -19,7 +21,7 @@ mod table {
     }
 
     #[test]
-    #[should_panic]
+    #[should_panic(expected="invalid datatype flt")]
     fn table_does_not_create_with_improper_types() {
         let columns = vec![("id", "num"), ("name", "flt")];
 
@@ -210,5 +212,52 @@ mod table {
 
         let _num_insertions = table.insert_many(values);
         assert_eq!(table.rows(), 4);
+    }
+
+    #[test]
+    fn table_update_noerror() {
+        let table = _create_table(vec![("id", "num"), ("name", "txt")]).unwrap();
+        let values = vec![
+            ("1", "Jansen"),
+            ("2", "Bonega"),
+            ("3", "Maharashtra"),
+            ("4", "Lorem"),
+        ].iter().map(|(id, name)| vec![id.to_string(), name.to_string()]).collect();
+
+        let _num_insertions = table.insert_many(values);
+
+        let mut updates: HashMap<String, String> = HashMap::new();
+        updates.insert("name".to_string(), "Momarian".to_string());
+
+        let cols_updated = table.update(3, updates.clone()).unwrap();
+        let reader = table.reader();
+        let rows = reader.scan();
+
+        assert_eq!(cols_updated, 1);
+        assert_eq!(rows[3].0[1].as_ref().unwrap(), updates.get("name").unwrap());
+    }
+
+    #[test]
+    #[should_panic(expected="invalid NULL")]
+    fn table_update_error() {
+        let table = _create_table(vec![("id", "num"), ("name", "txt")]).unwrap();
+        let values = vec![
+            ("1", "Jansen"),
+            ("2", "Bonega"),
+            ("3", "Maharashtra"),
+            ("4", "Lorem"),
+        ].iter().map(|(id, name)| vec![id.to_string(), name.to_string()]).collect();
+
+        let _num_insertions = table.insert_many(values);
+
+        let mut updates: HashMap<String, String> = HashMap::new();
+        updates.insert("name".to_string(), "".to_string());
+
+        let cols_updated = table.update(3, updates.clone()).unwrap();
+        let reader = table.reader();
+        let rows = reader.scan();
+
+        assert_eq!(cols_updated, 1);
+        assert_eq!(rows[3].0[1].as_ref().unwrap(), updates.get("name").unwrap());
     }
 }

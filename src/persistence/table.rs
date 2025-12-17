@@ -1,6 +1,7 @@
 use super::row::Row;
 use super::schema::{ColumnInformation, DataType, Schema};
 
+use std::collections::HashMap;
 use std::fmt::Display;
 use std::sync::{Arc, RwLock};
 
@@ -19,17 +20,58 @@ pub struct TableReader {
 impl Table {
     pub fn rows(&self) -> usize {
         //! Get the total number of rows as of the time of this call.
-        //! 
+        //!
         //! Returns a cloned value of row count, may behave differently
         //! for multi-threaded system.
-        
+
         self.row_count.read().unwrap().clone()
     }
 }
 
 // Table functionalities
 impl Table {
-    // TODO: try improving this guy
+    fn _validate_field(
+        &self,
+        item: String,
+        col_name: &String,
+        col_info: &ColumnInformation,
+    ) -> Result<Option<String>, String> {
+        //! An extended validator function to validate a single field.
+        //!
+        //! Returns an [`Option<String>`] if the field is valid, that can be directly pushed to row.
+
+        if item.is_empty() && col_info.nullable {
+            return Ok(None);
+        } else if item.is_empty() && !col_info.nullable {
+            return Err(format!(
+                "invalid NULL: empty strings not allowed on columm '{}'",
+                col_name
+            ));
+        } else {
+            match col_info.datatype {
+                DataType::Number => {
+                    if item.parse::<u64>().is_err() {
+                        return Err(format!(
+                            "invalid {}: value not allowed on column '{}' ({})",
+                            item, col_name, col_info.datatype
+                        ));
+                    }
+                }
+                DataType::Text => {
+                    if let Some(max_limit) = col_info.max_limit {
+                        if item.len() > max_limit {
+                            return Err(format!(
+                                "invalid {}: value not allowed on column '{}' ({})",
+                                item, col_name, col_info.datatype
+                            ));
+                        }
+                    }
+                }
+            }
+            return Ok(Some(item));
+        }
+    }
+
     fn _validate_data(&self, data: Vec<String>) -> Result<Row, String> {
         //! Validate the row with respect to the schema.
         //!
@@ -46,36 +88,7 @@ impl Table {
         let mut row: Vec<Option<String>> = Vec::new();
 
         for (item, (col_name, col_info)) in data.into_iter().zip(&self.schema.0) {
-            if item.is_empty() && col_info.nullable {
-                row.push(None);
-            } else if item.is_empty() && !col_info.nullable {
-                return Err(format!(
-                    "invalid NULL: empty strings not allowed on columm '{}'",
-                    col_name
-                ));
-            } else {
-                match col_info.datatype {
-                    DataType::Number => {
-                        if item.parse::<u64>().is_err() {
-                            return Err(format!(
-                                "invalid {}: value not allowed on column '{}' ({})",
-                                item, col_name, col_info.datatype
-                            ));
-                        }
-                    }
-                    DataType::Text => {
-                        if let Some(max_limit) = col_info.max_limit {
-                            if item.len() > max_limit {
-                                return Err(format!(
-                                    "invalid {}: value not allowed on column '{}' ({})",
-                                    item, col_name, col_info.datatype
-                                ));
-                            }
-                        }
-                    }
-                }
-                row.push(Some(item));
-            }
+            row.push(self._validate_field(item, col_name, col_info)?)
         }
 
         Ok(Row(row))
@@ -152,6 +165,40 @@ impl Table {
         }
 
         Ok(n_insertions)
+    }
+
+    pub fn update(&self, pk: usize, updates: HashMap<String, String>) -> Result<usize, String> {
+        //! Update specific columns of a row of a table from its primary key.
+        //!
+        //! Returns a boolean for the number of columns updated.
+
+        let row_count = self.row_count.read().unwrap().clone();
+        if pk > row_count {
+            return Err(format!("invalid pk: total {} rows", row_count));
+        }
+
+        let mut rows = self.rows.write().unwrap();
+        let row: &mut Vec<Option<String>> = rows.get_mut(pk).unwrap().0.as_mut();
+        let mut col_updated = 0;
+
+        for (col_name, col_data) in updates {
+            let index = self
+                .schema
+                .0
+                .iter()
+                .position(|(s_key, _)| col_name == *s_key)
+                .ok_or_else(|| format!("unexpected {}: no such column exists", col_name))?;
+
+            let (_, col_info) = &self.schema.0[index];
+
+            let validated_value =
+                self._validate_field(col_data, &col_name, col_info)?;
+
+            row[index] = validated_value;
+            col_updated += 1;
+        }
+
+        Ok(col_updated)
     }
 
     pub fn reader(&self) -> TableReader {
