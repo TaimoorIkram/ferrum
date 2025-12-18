@@ -4,18 +4,18 @@ mod table {
 
     use ferrum_engine::persistence::{Row, Table};
 
-    fn _create_table(columns: Vec<(&str, &str)>) -> Result<Table, String> {
-        Table::from(
+    fn _create_table(columns: Vec<&str>) -> Result<Table, String> {
+        Table::new(
             columns
                 .iter()
-                .map(|(id, datatype)| (id.to_string(), datatype.to_string()))
+                .map(|col_def| col_def.to_string())
                 .collect(),
         )
     }
 
     #[test]
     fn table_creates_with_proper_types() {
-        let columns = vec![("id", "num"), ("name", "txt")];
+        let columns = vec!["id num pk", "name txt"];
 
         _create_table(columns).unwrap();
     }
@@ -23,14 +23,14 @@ mod table {
     #[test]
     #[should_panic(expected="invalid datatype flt")]
     fn table_does_not_create_with_improper_types() {
-        let columns = vec![("id", "num"), ("name", "flt")];
+        let columns = vec!["id num pk", "name flt"];
 
         _create_table(columns).unwrap();
     }
 
     #[test]
     fn table_reader_scan_nonempty() {
-        let table = _create_table(vec![("id", "num"), ("name", "txt")]).unwrap();
+        let mut table = _create_table(vec!["id num pk", "name txt"]).unwrap();
         let values = vec![
             ("1", "Jansen"),
             ("2", "Bonega"),
@@ -58,7 +58,7 @@ mod table {
 
     #[test]
     fn table_reader_scan_empty() {
-        let table = _create_table(vec![("id", "num"), ("name", "txt")]).unwrap();
+        let table = _create_table(vec!["id num pk", "name txt"]).unwrap();
         let reader = table.reader();
         let rows = reader.scan();
 
@@ -67,7 +67,7 @@ mod table {
 
     #[test]
     fn table_reader_filter_nonempty() {
-        let table = _create_table(vec![("id", "num"), ("name", "txt")]).unwrap();
+        let mut table = _create_table(vec!["id num pk", "name txt"]).unwrap();
         let values = vec![
             ("1", "Jansen"),
             ("2", "Bonega"),
@@ -101,7 +101,7 @@ mod table {
 
     #[test]
     fn table_reader_filter_returns_empty() {
-        let table = _create_table(vec![("id", "num")]).unwrap();
+        let mut table = _create_table(vec![("id num pk")]).unwrap();
         table.insert(vec!["1".to_string()]).unwrap();
 
         let reader = table.reader();
@@ -117,7 +117,7 @@ mod table {
 
     #[test]
     fn table_reader_filter_handles_null_values() {
-        let table = _create_table(vec![("id", "num")]).unwrap();
+        let mut table = _create_table(vec![("id num pk")]).unwrap();
         // table.insert(vec!["".to_string()]).unwrap(); // NULL value
         table.insert(vec!["1".to_string()]).unwrap();
 
@@ -129,7 +129,7 @@ mod table {
 
     #[test]
     fn table_reader_select_single_column() {
-        let table = _create_table(vec![("id", "num"), ("name", "txt")]).unwrap();
+        let mut table = _create_table(vec!["id num pk", "name txt"]).unwrap();
         let values = vec![
             ("1", "Jansen"),
             ("2", "Bonega"),
@@ -153,7 +153,7 @@ mod table {
 
     #[test]
     fn table_reader_select_multiple_columns() {
-        let table = _create_table(vec![("id", "num"), ("name", "txt"), ("age", "num")]).unwrap();
+        let mut table = _create_table(vec!["id num pk", "name txt", "age num"]).unwrap();
 
         table
             .insert(vec!["1".to_string(), "Alice".to_string(), "30".to_string()])
@@ -173,7 +173,7 @@ mod table {
 
     #[test]
     fn table_insert_many_noerror() {
-        let table = _create_table(vec![("id", "num"), ("name", "txt")]).unwrap();
+        let mut table = _create_table(vec!["id num pk", "name txt"]).unwrap();
         let values = vec![
             ("1", "Jansen"),
             ("2", "Bonega"),
@@ -187,7 +187,7 @@ mod table {
 
     #[test]
     fn table_insert_many_error() {
-        let table = _create_table(vec![("id", "num"), ("name", "txt")]).unwrap();
+        let mut table = _create_table(vec!["id num pk", "name txt"]).unwrap();
         let values = vec![
             ("1", "Jansen"),
             ("2", "Bonega"),
@@ -202,7 +202,7 @@ mod table {
 
     #[test]
     fn table_insert_row_count() {
-        let table = _create_table(vec![("id", "num"), ("name", "txt")]).unwrap();
+        let mut table = _create_table(vec!["id num pk", "name txt"]).unwrap();
         let values = vec![
             ("1", "Jansen"),
             ("2", "Bonega"),
@@ -216,7 +216,7 @@ mod table {
 
     #[test]
     fn table_update_noerror() {
-        let table = _create_table(vec![("id", "num"), ("name", "txt")]).unwrap();
+        let mut table = _create_table(vec!["id num pk", "name txt"]).unwrap();
         let values = vec![
             ("1", "Jansen"),
             ("2", "Bonega"),
@@ -240,7 +240,7 @@ mod table {
     #[test]
     #[should_panic(expected="invalid NULL")]
     fn table_update_error() {
-        let table = _create_table(vec![("id", "num"), ("name", "txt")]).unwrap();
+        let mut table = _create_table(vec!["id num pk", "name txt"]).unwrap();
         let values = vec![
             ("1", "Jansen"),
             ("2", "Bonega"),

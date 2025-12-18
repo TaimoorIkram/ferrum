@@ -1,13 +1,52 @@
+use log::warn;
+
+use super::index::{Key, Index};
 use super::row::Row;
 use super::schema::{ColumnInformation, DataType, Schema};
 
-use std::collections::HashMap;
+use std::collections::{HashMap, VecDeque};
 use std::fmt::Display;
 use std::sync::{Arc, RwLock};
 
+/// Creates a new table with the specified schema.
+///
+/// # Column Format
+/// Each column definition is a space-separated string:
+/// - `"column_name datatype [pk]"`
+/// - Datatypes: `num` (number), `txt` (text)
+/// - Optional: `pk` marks column as part of primary key
+///
+/// # Examples
+/// ```
+/// use ferrum_engine::persistence::Table;
+/// 
+/// // Single column primary key
+/// let table = Table::new(vec![
+///     "id num pk".to_string(),
+///     "name txt".to_string(),
+/// ])?;
+///
+/// // Composite primary key
+/// let table = Table::new(vec![
+///     "user_id num pk".to_string(),
+///     "order_id num pk".to_string(),
+///     "amount num".to_string(),
+/// ])?;
+/// 
+/// Ok::<(), String>(())
+/// ```
+///
+/// # Errors
+/// Returns `Err` if:
+/// - Column list is empty
+/// - Column definition is malformed
+/// - Duplicate column names exist
 pub struct Table {
     schema: Arc<Schema>,
     rows: Arc<RwLock<Vec<Row>>>,
+    primary_key_columns: Vec<usize>,
+    is_indexed: bool,
+    index: Index,
 }
 
 pub struct TableReader {
@@ -93,7 +132,71 @@ impl Table {
         Ok(Row(row))
     }
 
-    pub fn from(columns: Vec<(String, String)>) -> Result<Table, String> {
+    fn _parse_column(
+        col_def: &str,
+    ) -> Result<(Option<String>, Option<DataType>, Option<Key>), String> {
+        //! Parse the column definition string.
+        //!
+        //! Returns the name of the column, and the column information.
+
+        let mut col_def_vec: VecDeque<&str> = col_def.split(" ").collect();
+        let (mut column, mut datatype, mut key) = (None, None, None);
+
+        // Get the name of the column making sure it is not a keyword
+        if let Some(col_name) = col_def_vec.pop_front() {
+            if vec!["pk", "fk", "num", "txt"].contains(&col_name) {
+                return Err(format!(
+                    "invalid input {}: keywords not allowed as column names",
+                    col_name
+                ));
+            } else {
+                column = Some(col_name.to_string());
+            }
+        }
+
+        // Get the datatype of the column
+        if let Some(col_type) = col_def_vec.pop_front() {
+            match col_type {
+                "num" => datatype = Some(DataType::Number),
+                "txt" => datatype = Some(DataType::Text),
+                _ => {
+                    return Err(format!(
+                        "invalid datatype {}: not supported, on column {}",
+                        col_type,
+                        column.unwrap()
+                    ));
+                }
+            }
+        }
+
+        // Get the keytype (if mentioned) of the column
+        if let Some(col_key) = col_def_vec.pop_front() {
+            match col_key {
+                "pk" => key = Some(Key::PrimaryKey),
+                "fk" => key = Some(Key::ForeignKey),
+                _ => return Err(format!("invalid key type {}: expected pk or fk", col_key)),
+            }
+        }
+
+        return Ok((column, datatype, key));
+    }
+
+    fn _create_index_key_from_row(&self, row: &Row) -> Result<String, String> {
+        let mut values: Vec<String> = Vec::new();
+
+        for index in self.primary_key_columns.iter() {
+            let value_at_index = row.0.get(*index).unwrap();
+            values.push(value_at_index.as_ref().unwrap().clone());
+        }
+
+        if values.len() == 0 && self.primary_key_columns.len() != 0 {
+            return Err("err: failed to index: unable to read columns".to_string());
+        }
+
+        Ok(values.join("|"))
+    }
+
+    pub fn new(columns: Vec<String>) -> Result<Table, String> {
         //! Return a new table with the said schema. The `columns` is a string mapping
         //! of column names and their datatypes.
         //!
@@ -106,40 +209,68 @@ impl Table {
         }
 
         let mut schema = vec![];
+        let mut primary_key_columns = vec![];
+
         let n_columns = columns.len();
 
-        for (column, datatype) in columns.iter() {
-            let col_info = match datatype.as_str() {
-                "num" => ColumnInformation::from(DataType::Number, None, false),
-                "txt" => ColumnInformation::from(DataType::Text, Some(50), false),
-                other => {
-                    return Err(format!(
-                        "invalid datatype {}: not supported, on column {}",
-                        other, column
-                    ));
-                }
+        for (index, col_def) in columns.iter().enumerate() {
+            let (column, datatype, key) = Self::_parse_column(col_def)?;
+            let max_limit = match datatype.as_ref().unwrap() {
+                DataType::Number => None,
+                DataType::Text => Some(50),
             };
-            schema.push((column.clone(), col_info));
+            let col_info = ColumnInformation::from(datatype.unwrap(), max_limit, false);
+
+            if let Some(key) = key {
+                match key {
+                    Key::PrimaryKey => primary_key_columns.push(index),
+                    Key::ForeignKey => {}
+                }
+            }
+            schema.push((column.unwrap().clone(), col_info));
         }
 
         let schema = Arc::new(Schema(schema));
         let rows = Arc::new(RwLock::new(Vec::with_capacity(n_columns)));
+        let index = Index::new();
 
-        Ok(Table { schema, rows })
+        let mut is_indexed = true;
+        if primary_key_columns.len() == 0 {
+            warn!(
+                "warn: no index; manual indexing is not available yet so searches may be slower"
+            );
+            is_indexed = false;
+        }
+
+        Ok(Table {
+            schema,
+            rows,
+            primary_key_columns,
+            is_indexed,
+            index,
+        })
     }
 
-    pub fn insert(&self, data: Vec<String>) -> Result<Row, String> {
+    pub fn insert(&mut self, data: Vec<String>) -> Result<Row, String> {
         //! Basic insert function that inserts a row of values by matching their data-
         //! types and nullability.
         //!
         //! Returns a [Result<Row, String>] containing a copy of the row inserted.
 
         let row = self._validate_data(data)?;
-        self.rows.write().unwrap().push(row.clone());
+        let mut rows = self.rows.write().unwrap();
+        let row_index = rows.len();
+
+        if self.is_indexed {
+            self.index
+                .insert(self._create_index_key_from_row(&row)?, row_index);
+        }
+
+        rows.push(row.clone());
         Ok(row)
     }
 
-    pub fn insert_many(&self, values: Vec<Vec<String>>) -> Result<usize, String> {
+    pub fn insert_many(&mut self, values: Vec<Vec<String>>) -> Result<usize, String> {
         //! Bulk insert operation, uses the same insert function inside it.
         //!
         //! Returns the total number of successful entries

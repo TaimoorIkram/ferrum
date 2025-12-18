@@ -1,27 +1,27 @@
 use ferrum_engine::persistence::Table;
-use std::sync::Arc;
+use log::error;
 
 fn main() {
-    let columns = vec![("id", "num"), ("name", "txt")];
+    let columns = vec!["id num pk", "name txt"];
 
-    let table = match Table::from(
+    let table = match Table::new(
         columns
             .iter()
-            .map(|(id, datatype)| (id.to_string(), datatype.to_string()))
+            .map(|col_def| col_def.to_string())
             .collect(),
     ) {
         Ok(t) => {
-            println!("Table successfully created.");
-            Some(Arc::new(t))
+            error!("Table successfully created.");
+            Some(t)
         }
         Err(msg) => {
-            println!("err: {}", msg);
+            error!("err: {}", msg);
             None
         }
     };
 
     if table.is_some() {
-        let table = table.unwrap();
+        let mut table = table.unwrap();
 
         let dataset = vec![
             ("1", "Jansen"),
