@@ -8,6 +8,12 @@ pub(crate) enum Key {
 /// A simple index implementation to find the rows by primary key quickly.
 ///
 /// Composite keys are concatenated with a separator.
+/// 
+/// # Issues
+/// - The index is NOT multi-thread compatible. This means there is a grave danger
+/// that the data becomes corrupted upon running in multi-threaded mode!
+/// - Index management to allow more than one indexes to be created for a [super::Table], 
+/// making more efficient searching possible on different column combinations.
 pub(crate) struct Index {
     key_index_map: HashMap<String, usize>,
 }
@@ -30,7 +36,15 @@ impl Index {
         self.key_index_map.remove(key)
     }
 
-    pub fn shift_index_back(&mut self) {
-        //! TODO: impl after [`super::table::Table::delete`] on [`super::table::Table`]
+    pub fn shift_index_back(&mut self, start_index: usize) {
+        //! Re-shape the index so as to remove the empty space in 
+        //! the index from a deleted row in the `rows` vector of the 
+        //! [super::Table].
+
+        for row_index in self.key_index_map.values_mut() {
+            if *row_index > start_index {
+                *row_index -= 1;
+            }
+        }
     }
 }

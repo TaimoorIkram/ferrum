@@ -1,6 +1,6 @@
 use log::warn;
 
-use super::index::{Key, Index};
+use super::index::{Index, Key};
 use super::row::Row;
 use super::schema::{ColumnInformation, DataType, Schema};
 
@@ -15,11 +15,19 @@ use std::sync::{Arc, RwLock};
 /// - `"column_name datatype [pk]"`
 /// - Datatypes: `num` (number), `txt` (text)
 /// - Optional: `pk` marks column as part of primary key
+/// 
+/// # Note
+/// In case a `pk` value is not mentioned, the first column 
+/// will automatically be taken as a key column. Remember that
+/// this does not create any index mappings but is just an
+/// internal marker for the table to use if no indexes are 
+/// present. This will be replaced with a default compulsory 
+/// index and optional further indexes in the future.
 ///
 /// # Examples
 /// ```
 /// use ferrum_engine::persistence::Table;
-/// 
+///
 /// // Single column primary key
 /// let table = Table::new(vec![
 ///     "id num pk".to_string(),
@@ -32,7 +40,7 @@ use std::sync::{Arc, RwLock};
 ///     "order_id num pk".to_string(),
 ///     "amount num".to_string(),
 /// ])?;
-/// 
+///
 /// Ok::<(), String>(())
 /// ```
 ///
@@ -49,6 +57,24 @@ pub struct Table {
     index: Index,
 }
 
+/// Creates a reader object over a [Table]'s data snapshot.
+///
+/// A Table is mutable itself, so performing multiple read operations on the same
+/// table is not optimal, especially when the architecture becomes multi-threaded.
+/// To solve this, everytime a table is to be used as read-only, a [TableReader]
+/// object is used via the [Table::reader] method.
+///
+/// A [TableReader] object stores a snapshot of the original table and can perform
+/// the following operations over that snapshot:
+/// - [TableReader::scan] returns all the [Row]s as a [Vec] object.
+/// - [TableReader::filter] runs a filter closure on the rows, returns another
+/// [TableReader] object.
+/// - [TableReader::select] selects specific columns of the table to convert to
+/// another [TableReader] object.
+///
+/// # Issues
+/// - TableReader does NOT support indexing, because it does not know how to use that
+/// index for a shrunk dataset when chaining its methods.
 pub struct TableReader {
     pub schema: Arc<Schema>,
     pub rows: Arc<RwLock<Vec<Row>>>,
@@ -196,6 +222,37 @@ impl Table {
         Ok(values.join("|"))
     }
 
+    fn _extract_pk_values<'a>(&self, row: &'a Row) -> Vec<&'a str> {
+        self.primary_key_columns
+            .iter()
+            .filter_map(|&idx| row.0.get(idx)?.as_ref().map(|s| s.as_str()))
+            .collect()
+    }
+
+    fn _find_row_unindexed(&self, keys: Vec<&str>) -> Option<usize> {
+        //! Search function by key, for tables with no index.
+        //!
+        //! Returns an index to a row.
+
+        let rows = self.rows.read().unwrap();
+        let key = keys.join("|");
+        rows.iter()
+            .position(|row| self._extract_pk_values(row).join("|") == key)
+    }
+
+    fn _find_row(&self, pk: Vec<&str>) -> Option<usize> {
+        //! Search the row, in a table either with or without
+        //! the index.
+        //!
+        //! Returns a pointer of the found row.
+
+        if self.is_indexed {
+            self.index.get(pk.join("|").as_str())
+        } else {
+            self._find_row_unindexed(pk)
+        }
+    }
+
     pub fn new(columns: Vec<String>) -> Result<Table, String> {
         //! Return a new table with the said schema. The `columns` is a string mapping
         //! of column names and their datatypes.
@@ -236,9 +293,10 @@ impl Table {
 
         let mut is_indexed = true;
         if primary_key_columns.len() == 0 {
-            warn!(
-                "warn: no index; manual indexing is not available yet so searches may be slower"
-            );
+            // a fail-safe to assume some form of key to run non-indexed searches
+            primary_key_columns.push(0);
+
+            warn!("warn: no index; manual indexing is not available yet so searches may be slower");
             is_indexed = false;
         }
 
@@ -322,6 +380,66 @@ impl Table {
         }
 
         Ok(col_updated)
+    }
+
+    pub fn delete(&mut self, pk: Vec<&str>) -> Result<Row, String> {
+        //! A simple delete operation by the `pk`.
+        //!
+        //! Looks for the exact index inside the index to get to the row.
+        //! If the table supports indexing, then the index is also 
+        //! reconstructed to remove the empty space from row deletion.
+        //!
+        //! Returns a snapshot of the deleted row.
+
+        let key_components = self.primary_key_columns.len();
+        if self.is_indexed && pk.len() != key_components {
+            return Err(format!(
+                "err: invalid key arguments: {} expected, {} provided",
+                key_components,
+                pk.len()
+            ));
+        } else if pk.len() == 0 {
+            return Err(format!(
+                "err: need a key for non-indexed search"
+            ));
+        }
+
+        let key = pk.join("|");
+        match self._find_row(pk) {
+            Some(index) => {
+                let mut rows = self.rows.write().unwrap();
+                let deleted_row = rows.remove(index);
+
+                if self.is_indexed {
+                    self.index.remove(key.as_str());
+                    self.index.shift_index_back(index);
+                }
+
+                Ok(deleted_row)
+            }
+            None => Err("err: invalid key; no match for this index".to_string()),
+        }
+    }
+
+    pub fn delete_many(&mut self, pks: Vec<Vec<&str>>) -> Result<usize, String> {
+        //! Bulk delete operation, uses the same delete function inside it.
+        //!
+        //! Returns the total number of successful deletions
+        //!
+        //! Deletion is not transactional! Error during deletion stops the
+        //! deletions after it, but keeps the ones prior.
+        //!
+        //! In the future, multi-threading may help speed up the working of
+        //! this function.
+
+        let mut n_deletions = 0;
+
+        for pk in pks {
+            self.delete(pk)?;
+            n_deletions += 1;
+        }
+
+        Ok(n_deletions)
     }
 
     pub fn reader(&self) -> TableReader {

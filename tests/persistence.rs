@@ -5,12 +5,7 @@ mod table {
     use ferrum_engine::persistence::{Row, Table};
 
     fn _create_table(columns: Vec<&str>) -> Result<Table, String> {
-        Table::new(
-            columns
-                .iter()
-                .map(|col_def| col_def.to_string())
-                .collect(),
-        )
+        Table::new(columns.iter().map(|col_def| col_def.to_string()).collect())
     }
 
     #[test]
@@ -21,7 +16,7 @@ mod table {
     }
 
     #[test]
-    #[should_panic(expected="invalid datatype flt")]
+    #[should_panic(expected = "invalid datatype flt")]
     fn table_does_not_create_with_improper_types() {
         let columns = vec!["id num pk", "name flt"];
 
@@ -105,12 +100,15 @@ mod table {
         table.insert(vec!["1".to_string()]).unwrap();
 
         let reader = table.reader();
-        let rows = reader.filter(|row| {
-            row.0[0]
-                .as_ref()
-                .and_then(|s| s.parse::<u32>().ok())
-                .map_or(false, |id| id > 100)
-        }).unwrap().scan();
+        let rows = reader
+            .filter(|row| {
+                row.0[0]
+                    .as_ref()
+                    .and_then(|s| s.parse::<u32>().ok())
+                    .map_or(false, |id| id > 100)
+            })
+            .unwrap()
+            .scan();
 
         assert_eq!(rows.len(), 0);
     }
@@ -179,7 +177,10 @@ mod table {
             ("2", "Bonega"),
             ("3", "Maharashtra"),
             ("4", "Lorem"),
-        ].iter().map(|(id, name)| vec![id.to_string(), name.to_string()]).collect();
+        ]
+        .iter()
+        .map(|(id, name)| vec![id.to_string(), name.to_string()])
+        .collect();
 
         let num_insertions = table.insert_many(values);
         assert_eq!(num_insertions.unwrap(), 4);
@@ -193,7 +194,10 @@ mod table {
             ("2", "Bonega"),
             ("3", "Maharashtra"),
             ("x", "Lorem"),
-        ].iter().map(|(id, name)| vec![id.to_string(), name.to_string()]).collect();
+        ]
+        .iter()
+        .map(|(id, name)| vec![id.to_string(), name.to_string()])
+        .collect();
 
         // will fail because err is unwrapped
         let _num_insertions = table.insert_many(values);
@@ -208,7 +212,10 @@ mod table {
             ("2", "Bonega"),
             ("3", "Maharashtra"),
             ("4", "Lorem"),
-        ].iter().map(|(id, name)| vec![id.to_string(), name.to_string()]).collect();
+        ]
+        .iter()
+        .map(|(id, name)| vec![id.to_string(), name.to_string()])
+        .collect();
 
         let _num_insertions = table.insert_many(values);
         assert_eq!(table.rows(), 4);
@@ -222,7 +229,10 @@ mod table {
             ("2", "Bonega"),
             ("3", "Maharashtra"),
             ("4", "Lorem"),
-        ].iter().map(|(id, name)| vec![id.to_string(), name.to_string()]).collect();
+        ]
+        .iter()
+        .map(|(id, name)| vec![id.to_string(), name.to_string()])
+        .collect();
 
         let _num_insertions = table.insert_many(values);
 
@@ -238,7 +248,7 @@ mod table {
     }
 
     #[test]
-    #[should_panic(expected="invalid NULL")]
+    #[should_panic(expected = "invalid NULL")]
     fn table_update_error() {
         let mut table = _create_table(vec!["id num pk", "name txt"]).unwrap();
         let values = vec![
@@ -246,7 +256,10 @@ mod table {
             ("2", "Bonega"),
             ("3", "Maharashtra"),
             ("4", "Lorem"),
-        ].iter().map(|(id, name)| vec![id.to_string(), name.to_string()]).collect();
+        ]
+        .iter()
+        .map(|(id, name)| vec![id.to_string(), name.to_string()])
+        .collect();
 
         let _num_insertions = table.insert_many(values);
 
@@ -259,5 +272,107 @@ mod table {
 
         assert_eq!(cols_updated, 1);
         assert_eq!(rows[3].0[1].as_ref().unwrap(), updates.get("name").unwrap());
+    }
+
+    #[test]
+    fn table_delete_not_indexed() {
+        let mut table = _create_table(vec!["id num", "name txt"]).unwrap();
+        let values = vec![
+            ("1", "Jansen"),
+            ("2", "Bonega"),
+            ("3", "Maharashtra"),
+            ("4", "Lorem"),
+        ]
+        .iter()
+        .map(|(id, name)| vec![id.to_string(), name.to_string()])
+        .collect();
+
+        let _num_insertions = table.insert_many(values);
+
+        let deletion_pk = vec!["1"];
+
+        let deleted_row = table.delete(deletion_pk).unwrap();
+        assert_eq!(deleted_row.0[0], Some("1".to_string()));
+
+        let reader = table.reader();
+        assert_eq!(reader.scan()[1].0[0], Some("3".to_string()));
+    }
+
+    #[test]
+    fn table_delete_indexed() {
+        let mut table = _create_table(vec!["id num pk", "name txt"]).unwrap();
+        let values = vec![
+            ("1", "Jansen"),
+            ("2", "Bonega"),
+            ("3", "Maharashtra"),
+            ("4", "Lorem"),
+        ]
+        .iter()
+        .map(|(id, name)| vec![id.to_string(), name.to_string()])
+        .collect();
+
+        let _num_insertions = table.insert_many(values);
+
+        let deletion_pk = vec!["1"];
+
+        let deleted_row = table.delete(deletion_pk).unwrap();
+        assert_eq!(deleted_row.0[0], Some("1".to_string()));
+
+        let reader = table.reader();
+        assert_eq!(reader.scan()[1].0[0], Some("3".to_string()));
+    }
+
+    #[test]
+    fn table_delete_many_not_indexed() {
+        let mut table = _create_table(vec!["id num", "name txt"]).unwrap();
+        let values = vec![
+            ("1", "Jansen"),
+            ("2", "Bonega"),
+            ("3", "Maharashtra"),
+            ("4", "Lorem"),
+        ]
+        .iter()
+        .map(|(id, name)| vec![id.to_string(), name.to_string()])
+        .collect();
+
+        let _num_insertions = table.insert_many(values);
+
+        let deletion_pks = vec![
+            vec!["1"],
+            vec!["2"],
+        ];
+
+        let deleted_row_count = table.delete_many(deletion_pks).unwrap();
+        assert_eq!(deleted_row_count, 2);
+
+        let reader = table.reader();
+        assert_eq!(reader.scan()[0].0[0], Some("3".to_string()));
+    }
+
+    #[test]
+    fn table_delete_many_indexed() {
+        let mut table = _create_table(vec!["id num pk", "name txt"]).unwrap();
+        let values = vec![
+            ("1", "Jansen"),
+            ("2", "Bonega"),
+            ("3", "Maharashtra"),
+            ("4", "Lorem"),
+        ]
+        .iter()
+        .map(|(id, name)| vec![id.to_string(), name.to_string()])
+        .collect();
+
+        let _num_insertions = table.insert_many(values);
+
+        let deletion_pks = vec![
+            vec!["1"],
+            vec!["2"],
+        ];
+
+        let deleted_row_count = table.delete_many(deletion_pks).unwrap();
+        assert_eq!(deleted_row_count, 2);
+
+        let reader = table.reader();
+        assert_eq!(reader.scan()[0].0[0], Some("3".to_string()));
     }
 }
