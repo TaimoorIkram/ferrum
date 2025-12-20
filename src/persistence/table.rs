@@ -15,13 +15,13 @@ use std::sync::{Arc, RwLock};
 /// - `"column_name datatype [pk]"`
 /// - Datatypes: `num` (number), `txt` (text)
 /// - Optional: `pk` marks column as part of primary key
-/// 
+///
 /// # Note
-/// In case a `pk` value is not mentioned, the first column 
+/// In case a `pk` value is not mentioned, the first column
 /// will automatically be taken as a key column. Remember that
 /// this does not create any index mappings but is just an
-/// internal marker for the table to use if no indexes are 
-/// present. This will be replaced with a default compulsory 
+/// internal marker for the table to use if no indexes are
+/// present. This will be replaced with a default compulsory
 /// index and optional further indexes in the future.
 ///
 /// # Examples
@@ -80,9 +80,8 @@ pub struct TableReader {
     pub rows: Arc<RwLock<Vec<Row>>>,
 }
 
-// Table field methods
 impl Table {
-    pub fn rows(&self) -> usize {
+    pub fn _rows(&self) -> usize {
         //! Get the total number of rows as of the time of this call.
         //!
         //! Returns a cloned value of row count, may behave differently
@@ -90,10 +89,7 @@ impl Table {
 
         self.rows.read().unwrap().len()
     }
-}
 
-// Table functionalities
-impl Table {
     fn _validate_field(
         &self,
         item: String,
@@ -354,7 +350,7 @@ impl Table {
         //!
         //! Returns a boolean for the number of columns updated.
 
-        let row_count = self.rows();
+        let row_count = self._rows();
         if pk > row_count {
             return Err(format!("invalid pk: total {} rows", row_count));
         }
@@ -386,7 +382,7 @@ impl Table {
         //! A simple delete operation by the `pk`.
         //!
         //! Looks for the exact index inside the index to get to the row.
-        //! If the table supports indexing, then the index is also 
+        //! If the table supports indexing, then the index is also
         //! reconstructed to remove the empty space from row deletion.
         //!
         //! Returns a snapshot of the deleted row.
@@ -399,9 +395,7 @@ impl Table {
                 pk.len()
             ));
         } else if pk.len() == 0 {
-            return Err(format!(
-                "err: need a key for non-indexed search"
-            ));
+            return Err(format!("err: need a key for non-indexed search"));
         }
 
         let key = pk.join("|");

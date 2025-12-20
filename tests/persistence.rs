@@ -218,7 +218,7 @@ mod table {
         .collect();
 
         let _num_insertions = table.insert_many(values);
-        assert_eq!(table.rows(), 4);
+        assert_eq!(table._rows(), 4);
     }
 
     #[test]
