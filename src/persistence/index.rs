@@ -1,5 +1,13 @@
 use std::collections::HashMap;
 
+/// The basic types of key linkages allowed between records.
+/// [Key::PrimaryKey] is an indicator for the
+/// [Key::ForeignKey] contains tracking features for the column so as to
+/// bind to the column of the other table.
+///
+/// # Issues
+/// - PrimaryKey is merely a signal for now, but may get tracking features
+/// for cascading deletions and updates in the future
 pub(crate) enum Key {
     PrimaryKey,
     ForeignKey,
@@ -8,11 +16,11 @@ pub(crate) enum Key {
 /// A simple index implementation to find the rows by primary key quickly.
 ///
 /// Composite keys are concatenated with a separator.
-/// 
+///
 /// # Issues
 /// - The index is NOT multi-thread compatible. This means there is a grave danger
 /// that the data becomes corrupted upon running in multi-threaded mode!
-/// - Index management to allow more than one indexes to be created for a [super::Table], 
+/// - Index management to allow more than one indexes to be created for a [super::Table],
 /// making more efficient searching possible on different column combinations.
 pub(crate) struct Index {
     key_index_map: HashMap<String, usize>,
@@ -37,8 +45,8 @@ impl Index {
     }
 
     pub fn shift_index_back(&mut self, start_index: usize) {
-        //! Re-shape the index so as to remove the empty space in 
-        //! the index from a deleted row in the `rows` vector of the 
+        //! Re-shape the index so as to remove the empty space in
+        //! the index from a deleted row in the `rows` vector of the
         //! [super::Table].
 
         for row_index in self.key_index_map.values_mut() {

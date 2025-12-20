@@ -29,13 +29,17 @@ use std::sync::{Arc, RwLock};
 /// use ferrum_engine::persistence::Table;
 ///
 /// // Single column primary key
-/// let table = Table::new(vec![
+/// let table = Table::new(
+/// "test".to_string(),
+/// vec![
 ///     "id num pk".to_string(),
 ///     "name txt".to_string(),
 /// ])?;
 ///
 /// // Composite primary key
-/// let table = Table::new(vec![
+/// let table = Table::new(
+/// "test".to_string(),
+/// vec![
 ///     "user_id num pk".to_string(),
 ///     "order_id num pk".to_string(),
 ///     "amount num".to_string(),
@@ -50,6 +54,7 @@ use std::sync::{Arc, RwLock};
 /// - Column definition is malformed
 /// - Duplicate column names exist
 pub struct Table {
+    name: String,
     schema: Arc<Schema>,
     rows: Arc<RwLock<Vec<Row>>>,
     primary_key_columns: Vec<usize>,
@@ -249,7 +254,7 @@ impl Table {
         }
     }
 
-    pub fn new(columns: Vec<String>) -> Result<Table, String> {
+    pub fn new(name: String, columns: Vec<String>) -> Result<Table, String> {
         //! Return a new table with the said schema. The `columns` is a string mapping
         //! of column names and their datatypes.
         //!
@@ -297,12 +302,17 @@ impl Table {
         }
 
         Ok(Table {
+            name,
             schema,
             rows,
             primary_key_columns,
             is_indexed,
             index,
         })
+    }
+
+    pub fn name(&self) -> String {
+        self.name.clone()
     }
 
     pub fn insert(&mut self, data: Vec<String>) -> Result<Row, String> {
@@ -452,6 +462,7 @@ impl Table {
 
 impl Display for Table {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        let name = self.name();
         let rows: Vec<String> = self
             .rows
             .read()
@@ -460,7 +471,10 @@ impl Display for Table {
             .map(|row| format!("{}", row))
             .collect();
 
-        writeln!(f, "{}\n{}", self.schema, rows.join("\n"))
+        writeln!(f, "{}", "=".repeat(name.len() + 10))
+            .and_then(|()| writeln!(f, "Table: {}", name))
+            .and_then(|()| writeln!(f, "{}", "=".repeat(name.len() + 10)))
+            .and_then(|()| writeln!(f, "{}\n{}", self.schema, rows.join("\n")))
     }
 }
 

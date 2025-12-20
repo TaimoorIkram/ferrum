@@ -5,7 +5,8 @@ mod table {
     use ferrum_engine::persistence::{Row, Table};
 
     fn _create_table(columns: Vec<&str>) -> Result<Table, String> {
-        Table::new(columns.iter().map(|col_def| col_def.to_string()).collect())
+        let name = "test_table".to_string();
+        Table::new(name, columns.iter().map(|col_def| col_def.to_string()).collect())
     }
 
     #[test]
