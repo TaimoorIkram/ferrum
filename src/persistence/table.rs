@@ -1,6 +1,6 @@
 use log::warn;
 
-use super::index::{Index, Key};
+use super::index::{ForeignKeyConstraint, Index, Key};
 use super::row::Row;
 use super::schema::{ColumnInformation, DataType, Schema};
 
@@ -54,12 +54,12 @@ use std::sync::{Arc, RwLock};
 /// - Column definition is malformed
 /// - Duplicate column names exist
 pub struct Table {
-    name: String,
-    schema: Arc<Schema>,
-    rows: Arc<RwLock<Vec<Row>>>,
-    primary_key_columns: Vec<usize>,
-    is_indexed: bool,
-    index: Index,
+    pub(crate) name: String,
+    pub(crate) schema: Arc<RwLock<Schema>>,
+    pub(crate) rows: Arc<RwLock<Vec<Row>>>,
+    pub(crate) primary_key_columns: Vec<usize>,
+    pub(crate) is_indexed: bool,
+    pub(crate) index: Index,
 }
 
 /// Creates a reader object over a [Table]'s data snapshot.
@@ -81,7 +81,7 @@ pub struct Table {
 /// - TableReader does NOT support indexing, because it does not know how to use that
 /// index for a shrunk dataset when chaining its methods.
 pub struct TableReader {
-    pub schema: Arc<Schema>,
+    pub schema: Arc<RwLock<Schema>>,
     pub rows: Arc<RwLock<Vec<Row>>>,
 }
 
@@ -142,17 +142,18 @@ impl Table {
         //!
         //! Returns the row if the data is correct.
 
-        if data.len() != self.schema.0.len() {
+        let schema = self.schema.read().unwrap();
+        if data.len() != schema.len() {
             return Err(format!(
                 "invalid data: schema has {} column(s), but {} were provided",
-                self.schema.0.len(),
+                schema.len(),
                 data.len(),
             ));
         }
 
         let mut row: Vec<Option<String>> = Vec::new();
 
-        for (item, (col_name, col_info)) in data.into_iter().zip(&self.schema.0) {
+        for (item, (col_name, col_info)) in data.into_iter().zip(schema.get_vec()) {
             row.push(self._validate_field(item, col_name, col_info)?)
         }
 
@@ -200,7 +201,24 @@ impl Table {
         if let Some(col_key) = col_def_vec.pop_front() {
             match col_key {
                 "pk" => key = Some(Key::PrimaryKey),
-                "fk" => key = Some(Key::ForeignKey),
+                "fk" => {
+                    let fk_ref = col_def_vec
+                        .pop_front()
+                        .ok_or("invalid reference table: format <table.col>")?;
+                    if fk_ref.len() == 2 {
+                        let mut fk_ref_args: VecDeque<String> = fk_ref
+                            .split(".")
+                            .into_iter()
+                            .map(|s| s.to_string())
+                            .collect();
+                        key = Some(Key::ForeignKey(
+                            fk_ref_args.pop_front().unwrap(),
+                            fk_ref_args.pop_front().unwrap(),
+                        ))
+                    } else {
+                        return Err(format!("invalid reference: check your fk argument again"));
+                    }
+                }
                 _ => return Err(format!("invalid key type {}: expected pk or fk", col_key)),
             }
         }
@@ -254,6 +272,21 @@ impl Table {
         }
     }
 
+    fn _validate_pk(&self, pk: &Vec<&str>) -> Result<(), String> {
+        let key_components = self.primary_key_columns.len();
+        if self.is_indexed && pk.len() != key_components {
+            Err(format!(
+                "err: invalid key arguments: {} expected, {} provided",
+                key_components,
+                pk.len()
+            ))
+        } else if pk.len() == 0 {
+            Err(format!("err: need a key for non-indexed search"))
+        } else {
+            Ok(())
+        }
+    }
+
     pub fn new(name: String, columns: Vec<String>) -> Result<Table, String> {
         //! Return a new table with the said schema. The `columns` is a string mapping
         //! of column names and their datatypes.
@@ -277,18 +310,21 @@ impl Table {
                 DataType::Number => None,
                 DataType::Text => Some(50),
             };
-            let col_info = ColumnInformation::from(datatype.unwrap(), max_limit, false);
+            let mut col_info = ColumnInformation::from(datatype.unwrap(), max_limit, false);
 
             if let Some(key) = key {
                 match key {
                     Key::PrimaryKey => primary_key_columns.push(index),
-                    Key::ForeignKey => {}
+                    Key::ForeignKey(table_name, column_name) => {
+                        col_info.foreign_key_constraint =
+                            Some(ForeignKeyConstraint::new(table_name, column_name))
+                    }
                 }
             }
             schema.push((column.unwrap().clone(), col_info));
         }
 
-        let schema = Arc::new(Schema(schema));
+        let schema = Arc::new(RwLock::new(Schema::new(schema)));
         let rows = Arc::new(RwLock::new(Vec::with_capacity(n_columns)));
         let index = Index::new();
 
@@ -355,29 +391,27 @@ impl Table {
         Ok(n_insertions)
     }
 
-    pub fn update(&self, pk: usize, updates: HashMap<String, String>) -> Result<usize, String> {
+    pub fn update(&self, pk: Vec<&str>, updates: HashMap<String, String>) -> Result<usize, String> {
         //! Update specific columns of a row of a table from its primary key.
         //!
         //! Returns a boolean for the number of columns updated.
 
-        let row_count = self._rows();
-        if pk > row_count {
-            return Err(format!("invalid pk: total {} rows", row_count));
-        }
+        self._validate_pk(&pk)?;
+        let row_index = self._find_row(pk).unwrap();
 
         let mut rows = self.rows.write().unwrap();
-        let row: &mut Vec<Option<String>> = rows.get_mut(pk).unwrap().0.as_mut();
+        let row: &mut Vec<Option<String>> = rows.get_mut(row_index).unwrap().0.as_mut();
         let mut col_updated = 0;
 
+        let schema = self.schema.read().unwrap();
         for (col_name, col_data) in updates {
-            let index = self
-                .schema
-                .0
+            let index = schema
+                .get_vec()
                 .iter()
                 .position(|(s_key, _)| col_name == *s_key)
                 .ok_or_else(|| format!("unexpected {}: no such column exists", col_name))?;
 
-            let (_, col_info) = &self.schema.0[index];
+            let (_, col_info) = schema.get(index).expect("err: invalid index");
 
             let validated_value = self._validate_field(col_data, &col_name, col_info)?;
 
@@ -397,16 +431,7 @@ impl Table {
         //!
         //! Returns a snapshot of the deleted row.
 
-        let key_components = self.primary_key_columns.len();
-        if self.is_indexed && pk.len() != key_components {
-            return Err(format!(
-                "err: invalid key arguments: {} expected, {} provided",
-                key_components,
-                pk.len()
-            ));
-        } else if pk.len() == 0 {
-            return Err(format!("err: need a key for non-indexed search"));
-        }
+        self._validate_pk(&pk)?;
 
         let key = pk.join("|");
         match self._find_row(pk) {
@@ -458,6 +483,11 @@ impl Table {
             rows: Arc::clone(&self.rows),
         }
     }
+
+    pub(crate) fn update_foreign_key_index(&mut self, schema_index: usize, key_index: usize) {
+        let mut schema = self.schema.write().unwrap();
+        schema.update_foreign_key_index(schema_index, key_index);
+    }
 }
 
 impl Display for Table {
@@ -470,11 +500,12 @@ impl Display for Table {
             .iter()
             .map(|row| format!("{}", row))
             .collect();
+        let schema = self.schema.read().unwrap();
 
         writeln!(f, "{}", "=".repeat(name.len() + 10))
             .and_then(|()| writeln!(f, "Table: {}", name))
             .and_then(|()| writeln!(f, "{}", "=".repeat(name.len() + 10)))
-            .and_then(|()| writeln!(f, "{}\n{}", self.schema, rows.join("\n")))
+            .and_then(|()| writeln!(f, "{}\n{}", schema, rows.join("\n")))
     }
 }
 
@@ -510,21 +541,28 @@ impl TableReader {
         //! Returns a table [`TableReader`] object as a projection of the current
         //! reader.
 
+        let schema = self.schema.read().unwrap();
+
         let indices: Vec<usize> = fields
             .iter()
             .map(|field| {
-                self.schema
-                    .0
+                schema
+                    .get_vec()
                     .iter()
                     .position(|(name, _)| name == field)
                     .expect(format!("invalid column {}: does not exist", field).as_str())
             })
             .collect();
 
-        let schema: Schema = Schema(
+        let new_schema: Schema = Schema::new(
             indices
                 .iter()
-                .map(|&index| self.schema.0[index].clone())
+                .map(|&index| {
+                    schema
+                        .get(index)
+                        .expect("err: invalid schema entry")
+                        .clone()
+                })
                 .collect(),
         );
 
@@ -535,7 +573,7 @@ impl TableReader {
             .collect();
 
         Ok(TableReader {
-            schema: Arc::new(schema),
+            schema: Arc::new(RwLock::new(new_schema)),
             rows: Arc::new(RwLock::new(rows)),
         })
     }

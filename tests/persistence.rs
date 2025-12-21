@@ -6,7 +6,10 @@ mod table {
 
     fn _create_table(columns: Vec<&str>) -> Result<Table, String> {
         let name = "test_table".to_string();
-        Table::new(name, columns.iter().map(|col_def| col_def.to_string()).collect())
+        Table::new(
+            name,
+            columns.iter().map(|col_def| col_def.to_string()).collect(),
+        )
     }
 
     #[test]
@@ -239,8 +242,9 @@ mod table {
 
         let mut updates: HashMap<String, String> = HashMap::new();
         updates.insert("name".to_string(), "Momarian".to_string());
+        let update_key = vec!["4"];
 
-        let cols_updated = table.update(3, updates.clone()).unwrap();
+        let cols_updated = table.update(update_key, updates.clone()).unwrap();
         let reader = table.reader();
         let rows = reader.scan();
 
@@ -266,8 +270,9 @@ mod table {
 
         let mut updates: HashMap<String, String> = HashMap::new();
         updates.insert("name".to_string(), "".to_string());
+        let update_key = vec!["4"];
 
-        let cols_updated = table.update(3, updates.clone()).unwrap();
+        let cols_updated = table.update(update_key, updates.clone()).unwrap();
         let reader = table.reader();
         let rows = reader.scan();
 
@@ -338,10 +343,7 @@ mod table {
 
         let _num_insertions = table.insert_many(values);
 
-        let deletion_pks = vec![
-            vec!["1"],
-            vec!["2"],
-        ];
+        let deletion_pks = vec![vec!["1"], vec!["2"]];
 
         let deleted_row_count = table.delete_many(deletion_pks).unwrap();
         assert_eq!(deleted_row_count, 2);
@@ -365,10 +367,7 @@ mod table {
 
         let _num_insertions = table.insert_many(values);
 
-        let deletion_pks = vec![
-            vec!["1"],
-            vec!["2"],
-        ];
+        let deletion_pks = vec![vec!["1"], vec!["2"]];
 
         let deleted_row_count = table.delete_many(deletion_pks).unwrap();
         assert_eq!(deleted_row_count, 2);

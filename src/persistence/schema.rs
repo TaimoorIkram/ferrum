@@ -1,5 +1,7 @@
 use std::fmt::Display;
 
+use crate::persistence::index::ForeignKeyConstraint;
+
 #[derive(Clone)]
 pub enum DataType {
     Number,
@@ -21,6 +23,7 @@ pub struct ColumnInformation {
     pub(super) datatype: DataType,
     pub(super) max_limit: Option<usize>,
     pub(super) nullable: bool,
+    pub(super) foreign_key_constraint: Option<ForeignKeyConstraint>,
 }
 
 impl ColumnInformation {
@@ -29,15 +32,72 @@ impl ColumnInformation {
             datatype,
             max_limit,
             nullable,
+            foreign_key_constraint: None,
         }
     }
 }
 
-pub struct Schema(pub Vec<(String, ColumnInformation)>);
+pub struct Schema(Vec<(String, ColumnInformation)>);
 
 impl Schema {
-    pub fn at(&self, index: usize) -> &(String, ColumnInformation) {
-        self.0.get(index).unwrap()
+    pub fn new(schema: Vec<(String, ColumnInformation)>) -> Schema {
+        //! Create a schema from a vector of column names and its associated
+        //! [`ColumnInformation`]s
+
+        Schema(schema)
+    }
+
+    pub fn get(&self, index: usize) -> Option<&(String, ColumnInformation)> {
+        //! Get schema column name and its information at the `index`.
+
+        self.0.get(index)
+    }
+
+    pub fn get_vec(&self) -> &Vec<(String, ColumnInformation)> {
+        //! Get the 0 attribute as a read-only reference.
+        //!
+        //! Returns the reference to the vector with column name and
+        //! column information.
+
+        self.0.as_ref()
+    }
+
+    pub fn len(&self) -> usize {
+        self.0.len()
+    }
+
+    pub(crate) fn get_foreign_key_constraints(&self) -> Vec<(usize, ForeignKeyConstraint)> {
+        //! Get all the non-none fk constraints.
+        //!
+        //! Returns a vector of [`super::index::ForeignKeyConstraint`]s, in order, ignoring those that
+        //! are `None`.
+
+        self.0
+            .iter()
+            .enumerate()
+            .filter_map(|(index, (_, info))| {
+                Some((index, info.foreign_key_constraint.clone().unwrap()))
+            })
+            .collect()
+    }
+
+    pub(crate) fn update_foreign_key_index(&mut self, schema_index: usize, key_index: usize) {
+        if let Some((_, col_info)) = self.0.get_mut(schema_index) {
+            col_info
+                .foreign_key_constraint
+                .as_mut()
+                .unwrap()
+                .update_index(key_index);
+        }
+    }
+
+    pub fn get_vec_mut(&mut self) -> &mut Vec<(String, ColumnInformation)> {
+        //! Get the 0 attribute as a read-only reference.
+        //!
+        //! Returns the reference to the vector with column name and
+        //! column information.
+
+        self.0.as_mut()
     }
 }
 

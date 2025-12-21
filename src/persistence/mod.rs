@@ -5,11 +5,13 @@
 //!
 
 //  All modules of this lib
+mod database;
 mod table;
 mod row;
 mod schema;
 mod index;
 
 //  External API
+pub use database::Database;
 pub use table::Table;
 pub use row::Row;

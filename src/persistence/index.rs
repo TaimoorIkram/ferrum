@@ -10,7 +10,16 @@ use std::collections::HashMap;
 /// for cascading deletions and updates in the future
 pub(crate) enum Key {
     PrimaryKey,
-    ForeignKey,
+    ForeignKey(String, String),
+}
+
+/// A simple foreign key constraint, that will be returned and saved in
+/// the [super::schema::Schema]'s [super::schema::ColumnInformation].
+#[derive(Clone)]
+pub(crate) struct ForeignKeyConstraint {
+    pub(crate) table_name: String,
+    pub(crate) column_name: String,
+    column_index: Option<usize>,
 }
 
 /// A simple index implementation to find the rows by primary key quickly.
@@ -53,6 +62,20 @@ impl Index {
             if *row_index > start_index {
                 *row_index -= 1;
             }
+        }
+    }
+}
+
+impl ForeignKeyConstraint {
+    pub(crate) fn update_index(&mut self, index: usize) {
+        self.column_index = Some(index);
+    }
+
+    pub fn new(table_name: String, column_name: String) -> ForeignKeyConstraint {
+        ForeignKeyConstraint {
+            table_name,
+            column_name,
+            column_index: None,
         }
     }
 }
