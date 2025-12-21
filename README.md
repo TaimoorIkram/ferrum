@@ -1,3 +1,5 @@
+![alt text](https://github.com/TaimoorIkram/ferrum/blob/main/.imgs/fe_banner.png?raw=true)
+
 # The Ferrum Database Engine
 
 Ferrum (_latin for Iron, hence the symbol Fe_) engine is a very small project aimed to be a fairly good implementation of a database management system.
