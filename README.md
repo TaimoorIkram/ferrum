@@ -10,6 +10,12 @@ Currently the engine is in its very initial days of development, but in the near
 - Feature-rich CLI tool.
 - Quick data reads over large datasets with multi-threading.
 
+## The `Issues` Section in Doc Comments
+
+Throughout the code, you will see comments, regarding design descriptions, which are a fade overview of my intent to implement things in the structs and methods. In those comments, there is a specific section I want to throw some light on and that is the "Issues" section.
+
+The "Issues" section is written not to point out defects, but to indicate the future improvements so I do not forget. They will, at some point in time, be resolved and integrated into the system. Right now, building a foundation is more important. Having a list of what else to look forward to, in addition to future design bugs coming out of the foundation design, it is important to keep a list of these things by the side. That is exactly what this section is about.
+
 ## Project Structure
 
 Structure is key and so currently, the project progresses in the following directory structure. These file names are placeholders only.
