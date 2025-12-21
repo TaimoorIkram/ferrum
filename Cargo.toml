@@ -1,7 +1,10 @@
 [package]
 name = "ferrum_engine"
-version = "0.1.0"
+description = "A tiny little database engine project powered by Rust."
+version = "0.2.0"
 edition = "2024"
+authors = ["Taimoor Ikram <taimoorikram01@gmail.com>"]
 
 [dependencies]
+colored = "3.0.0"
 log = "0.4.29"
