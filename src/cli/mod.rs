@@ -2,10 +2,15 @@ use std::io::{self, Write};
 
 use colored::Colorize;
 
-use crate::cli::colors::FERRUM_RED;
+use crate::cli::{
+    colors::FERRUM_RED,
+    messages::{highlight_argument, system_message},
+};
 
 mod colors;
 mod commands;
+mod messages;
+pub mod parsers;
 mod splash_screen;
 
 pub fn run_client() {
@@ -18,15 +23,17 @@ pub fn run_server() {
 }
 
 fn start_repl() {
-    println!(
-        "[{}] Use '{}' to quit and '{}' to know all commands available.",
-        "help".color(FERRUM_RED).bold(),
-        "corrode".color(FERRUM_RED),
-        "help".color(FERRUM_RED),
+    system_message(
+        "system",
+        format!(
+            "Use '{}' to quit and '{}' to know all commands available.",
+            highlight_argument("corrode"),
+            highlight_argument("help"),
+        ),
     );
 
     loop {
-        print!("{}> ", "ferrum".color(FERRUM_RED).bold());
+        print!("{:6} > ", "ferrum".color(FERRUM_RED).bold());
         io::stdout().flush().unwrap();
 
         let mut buffer = String::new();
