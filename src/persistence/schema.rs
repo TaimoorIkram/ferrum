@@ -76,7 +76,11 @@ impl Schema {
             .iter()
             .enumerate()
             .filter_map(|(index, (_, info))| {
-                Some((index, info.foreign_key_constraint.clone().unwrap()))
+                if info.foreign_key_constraint.is_some() {
+                    Some((index, info.foreign_key_constraint.clone().unwrap()))
+                } else {
+                    None
+                }
             })
             .collect()
     }

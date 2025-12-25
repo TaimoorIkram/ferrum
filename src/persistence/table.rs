@@ -205,12 +205,14 @@ impl Table {
                     let fk_ref = col_def_vec
                         .pop_front()
                         .ok_or("invalid reference table: format <table.col>")?;
-                    if fk_ref.len() == 2 {
-                        let mut fk_ref_args: VecDeque<String> = fk_ref
-                            .split(".")
-                            .into_iter()
-                            .map(|s| s.to_string())
-                            .collect();
+
+                    let mut fk_ref_args: VecDeque<String> = fk_ref
+                        .split(".")
+                        .into_iter()
+                        .map(|s| s.to_string())
+                        .collect();
+
+                    if fk_ref_args.len() == 2 {
                         key = Some(Key::ForeignKey(
                             fk_ref_args.pop_front().unwrap(),
                             fk_ref_args.pop_front().unwrap(),
@@ -285,6 +287,10 @@ impl Table {
         } else {
             Ok(())
         }
+    }
+
+    pub fn pk_exists(&self, pk: &str) -> bool {
+        self.index.get(pk).is_some()
     }
 
     pub fn new(name: String, columns: Vec<String>) -> Result<Table, String> {
@@ -391,7 +397,11 @@ impl Table {
         Ok(n_insertions)
     }
 
-    pub fn update(&self, pk: Vec<&str>, updates: HashMap<String, String>) -> Result<usize, String> {
+    pub fn update(
+        &mut self,
+        pk: Vec<&str>,
+        updates: HashMap<String, String>,
+    ) -> Result<usize, String> {
         //! Update specific columns of a row of a table from its primary key.
         //!
         //! Returns a boolean for the number of columns updated.

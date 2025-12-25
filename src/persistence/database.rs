@@ -7,15 +7,20 @@ use crate::persistence::index::ForeignKeyConstraint;
 
 use super::table::Table;
 
-/// The collective of multiple [super::Table] objects.
+/// The collective of multiple [`Table`] objects.
 ///
-/// A [Database] object is responsible for managing all the internal handling.
+/// A [`Database`] object is responsible for managing all the internal handling.
 /// Currently, I have provided a simple implementation for single-threaded mode.
 ///
-/// In the future maybe the following form of querying is available to be used 
+/// This is the smart class that does all the needed work of verifying integrity of
+/// data and then inserting it into the table as needed. [`Table`] is the dumb class
+/// that only knows how to feed the data into itself and verify the contents of the
+/// data before doing so.
+///
+/// In the future maybe the following form of querying is available to be used
 /// to query the table
 /// - `+:table_name:[(<col> <type> <pk?>,)*]:[(<other_table>.<col> <col?> <on_del> <on_upd>,)*]`
-/// 
+///
 /// Currently, the table DOES NOT support constraints.
 ///
 /// # Issues
@@ -64,6 +69,17 @@ impl Database {
         }
     }
 
+    fn _validate_foreign_key(&self, table_name: &str, value: &String) -> Result<bool, String> {
+        //! Validate the given key exists in the target table according to the defined foreign key
+        //! relationship.
+
+        let fk_table_ro = self
+            .tables
+            .get(table_name)
+            .ok_or_else(|| format!("err: does not exist: table '{}'", table_name))?;
+        Ok(fk_table_ro.read().unwrap().pk_exists(value))
+    }
+
     pub fn new(name: String) -> Database {
         //! Create a new database with no tables.
 
@@ -86,7 +102,10 @@ impl Database {
         //! for quick retrieval and relationship management.
 
         let mut table = Table::new(name, column_definitions)?;
-        let constraints = table.schema.read().unwrap().get_foreign_key_constraints();
+        let constraints = {
+            let table = table.schema.read().unwrap();
+            table.get_foreign_key_constraints()
+        };
 
         for (column_index, constraint) in constraints {
             if let Ok(key_index) = self._validate_foreign_key_constraint(&constraint) {
@@ -100,14 +119,58 @@ impl Database {
         Ok(())
     }
 
-    pub fn insert_into_table(&mut self, table_name: &str, data: Vec<String>) {
+    pub fn insert_into_table(&mut self, table_name: &str, data: Vec<String>) -> Result<(), String> {
         //! Insert the `data` row into the table.
         //!
         //! - The function first reads through the table's schema to verify the foreign keys.
         //! - After all foreign keys have been checked, insertion takes place.
         //!
         //! # Issues
-        //! - How does cascading effect take place after a successful insert?
+        //! - How will a null value be placed in place of the foreign key?
+
+        let table = self.tables.get(table_name).unwrap();
+        let constraints = {
+            let table = table.read().unwrap();
+            let schema = table.schema.read().unwrap();
+            schema.get_foreign_key_constraints()
+        };
+
+        for (index, constraint) in constraints.iter() {
+            let value = data
+                .get(*index)
+                .ok_or_else(|| format!("err: out of bound; index {}", *index))?;
+            let table_name = &constraint.table_name;
+            let column_name = &constraint.column_name;
+
+            if !self._validate_foreign_key(table_name, value)? {
+                return Err(format!(
+                    "err: does not exist: `{}` in `{}.{}`",
+                    value, table_name, column_name
+                ));
+            }
+        }
+
+        table.write().unwrap().insert(data)?;
+
+        Ok(())
+    }
+
+    pub fn insert_many_into_table(
+        &mut self,
+        table_name: &str,
+        rows: Vec<Vec<String>>,
+    ) -> Result<usize, String> {
+        //! Bulk insert operation, that uses the singular row insertion function
+        //! under the hood.
+
+        let mut n_insertions = 0;
+
+        for row in rows {
+            self.insert_into_table(table_name, row)?;
+            n_insertions += 1;
+        }
+
+        Ok(n_insertions)
     }
 
     pub fn update_table_set(
@@ -136,5 +199,10 @@ impl Database {
         //!
         //! # Issues
         //! - How does cascading effect take place after a successful update?
+    }
+
+    pub fn get_table(&self, table_name: String) -> Option<Arc<RwLock<Table>>> {
+        let table = self.tables.get(&table_name)?;
+        Some(Arc::clone(table))
     }
 }
