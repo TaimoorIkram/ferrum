@@ -1,4 +1,4 @@
-![alt text](https://github.com/TaimoorIkram/ferrum/blob/main/.imgs/fe_banner.png?raw=true)
+![Ferrum Banner](https://github.com/TaimoorIkram/ferrum/blob/main/.imgs/fe_banner.png?raw=true)
 
 # The Ferrum Database Engine
 
@@ -11,6 +11,14 @@ Currently the engine is in its very initial days of development, but in the near
 - A user friendly CLI interface with query processing.
 - Feature-rich CLI tool.
 - Quick data reads over large datasets with multi-threading.
+
+## Starting the Engine
+
+In the terminal type `cargo r client` to build and start the engine in `client` mode. The `server` mode is currently not the main focus of the project. After you see the line `ferrum >` awaiting your input, you can type anything!
+
+![Ferrum Client Interface](https://github.com/TaimoorIkram/ferrum/blob/main/.imgs/fe_cli_client.png?raw=true)
+
+What you type is checked to see if it is an engine comamnd. Otherwise, it is treated as an SQL statement. Currently, the engine supports only MySQL dialect but this will be customizable later.
 
 ## The `Issues` Section in Doc Comments
 
