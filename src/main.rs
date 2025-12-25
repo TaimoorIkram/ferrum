@@ -1,17 +1,10 @@
 use clap::Parser;
 use ferrum_engine::cli::{
     self,
-    parsers::{CliMode, CliParser, SqlParser},
+    parsers::{CliMode, CliParser},
 };
-use sqlparser::dialect::GenericDialect;
 
 fn main() {
-    // let sql = "SELECT * FROM table1";
-    // let dialect = GenericDialect {};
-    // let ast = SqlParser::parse_sql(&dialect, sql);
-
-    // println!("{:#?}", ast);
-
     let args = CliParser::parse();
     // let args: Vec<String> = env::args().collect();
 

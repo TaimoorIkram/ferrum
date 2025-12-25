@@ -1,10 +1,13 @@
 use std::io::{self, Write};
 
 use colored::Colorize;
+use sqlparser::dialect::MySqlDialect;
 
 use crate::cli::{
     colors::FERRUM_RED,
+    commands::SqlExecutor,
     messages::{highlight_argument, system_message},
+    parsers::SqlParser,
 };
 
 mod colors;
@@ -23,13 +26,16 @@ pub fn run_server() {
 }
 
 fn start_repl() {
-    system_message(
-        "system",
-        format!(
-            "Use '{}' to quit and '{}' to know all commands available.",
-            highlight_argument("corrode"),
-            highlight_argument("help"),
-        ),
+    println!(
+        "{}",
+        system_message(
+            "system",
+            format!(
+                "Use '{}' to quit and '{}' to know all commands available.",
+                highlight_argument("corrode"),
+                highlight_argument("help"),
+            ),
+        )
     );
 
     loop {
@@ -40,10 +46,50 @@ fn start_repl() {
         io::stdin().read_line(&mut buffer).unwrap();
 
         match buffer.trim() {
-            "help" => println!("mate... there's like, only 2 commands, use the other one to exit."),
+            "help" => println!(
+                "{}",
+                system_message(
+                    "system",
+                    format!(
+                        "Use '{}' to quit. All other inputs to terminal are treated as {}.",
+                        highlight_argument("corrode"),
+                        highlight_argument("sql statements"),
+                    ),
+                )
+            ),
             "exit" => println!("did you mean '{}'?", "corrode".color(FERRUM_RED)),
             "corrode" => break,
-            other => println!("invalid command: {}", other),
+            sql => {
+                let dialect = Box::new(MySqlDialect {});
+                let parser = SqlParser::new(dialect);
+
+                match parser.parse_single_sql(sql) {
+                    Ok(statement) => {
+                        println!(
+                            "{}",
+                            system_message(
+                                "ferrum",
+                                "The statement was parsed successfully!".to_string(),
+                            )
+                        );
+
+                        let executor = SqlExecutor::new(statement);
+                        match executor.execute() {
+                            Ok(n_stmts) => println!(
+                                "{}",
+                                system_message(
+                                    "ferrum",
+                                    format!("{} query(s) ran successfully!", n_stmts)
+                                )
+                            ),
+                            Err(error) => println!("{}", error),
+                        }
+                    }
+                    Err(error) => {
+                        println!("{}", error);
+                    }
+                };
+            }
         }
     }
 }

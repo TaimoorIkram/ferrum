@@ -13,5 +13,5 @@ mod index;
 
 //  External API
 pub use database::Database;
-pub use table::Table;
+pub use table::{Table, TableReader};
 pub use row::Row;
