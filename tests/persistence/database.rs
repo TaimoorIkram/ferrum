@@ -20,7 +20,7 @@ fn _create_table(
         .create_table(name.clone(), column_definitions)
         .expect("invalid column definitions or table exists already");
     database.insert_many_into_table(name.as_ref(), data)?;
-    Ok(database.get_table(name).unwrap())
+    Ok(database.get_table(&name).unwrap())
 }
 
 fn _update_table(
@@ -130,7 +130,7 @@ fn database_update_table() {
 
     _update_table(&mut database, "test_tb1", pk.to_vec(), data).unwrap();
 
-    let table = database.get_table("test_tb1".to_string()).unwrap();
+    let table = database.get_table("test_tb1").unwrap();
     let rows = table.read().unwrap().reader().scan();
     let row = rows.get(0).unwrap();
     assert_eq!(row.0.get(1).unwrap().clone().unwrap(), "Marvin".to_string());
@@ -164,7 +164,7 @@ fn database_update_table_with_fk() {
 
     _update_table(&mut database, "test_tb2", pk.to_vec(), data).unwrap();
 
-    let table = database.get_table("test_tb2".to_string()).unwrap();
+    let table = database.get_table("test_tb2").unwrap();
     let rows = table.read().unwrap().reader().scan();
     let row = rows.get(0).unwrap();
     assert_eq!(row.0.get(1).unwrap().clone().unwrap(), "2".to_string());
@@ -199,7 +199,7 @@ fn database_update_table_with_fk_fail() {
 
     _update_table(&mut database, "test_tb2", pk.to_vec(), data).unwrap();
 
-    let table = database.get_table("test_tb2".to_string()).unwrap();
+    let table = database.get_table("test_tb2").unwrap();
     let rows = table.read().unwrap().reader().scan();
     let row = rows.get(0).unwrap();
     assert_eq!(row.0.get(1).unwrap().clone().unwrap(), "2".to_string());
@@ -236,7 +236,7 @@ fn database_update_many_table_with_fk() {
 
     _update_table_many(&mut database, "test_tb2", pks.to_vec(), data).unwrap();
 
-    let table = database.get_table("test_tb2".to_string()).unwrap();
+    let table = database.get_table("test_tb2").unwrap();
     let rows = table.read().unwrap().reader().scan();
     let row = rows.get(0).unwrap();
     assert_eq!(row.0.get(1).unwrap().clone().unwrap(), "3".to_string());
@@ -274,7 +274,7 @@ fn database_update_many_table_with_fk_fail() {
 
     _update_table_many(&mut database, "test_tb2", pks.to_vec(), data).unwrap();
 
-    let table = database.get_table("test_tb2".to_string()).unwrap();
+    let table = database.get_table("test_tb2").unwrap();
     let rows = table.read().unwrap().reader().scan();
     let row = rows.get(0).unwrap();
     assert_eq!(row.0.get(1).unwrap().clone().unwrap(), "3".to_string());
@@ -298,7 +298,7 @@ fn database_delete_from_table_with_pk() {
         "1".to_string()
     );
 
-    let table = database.get_table("test_tb1".to_string()).unwrap();
+    let table = database.get_table("test_tb1").unwrap();
     assert_eq!(table.read().unwrap()._rows(), 2);
 }
 
@@ -318,6 +318,6 @@ fn database_delete_many_from_table_with_pk() {
     assert_eq!(deleted_count.is_ok(), true);
     assert_eq!(deleted_count.unwrap(), 2);
 
-    let table = database.get_table("test_tb1".to_string()).unwrap();
+    let table = database.get_table("test_tb1").unwrap();
     assert_eq!(table.read().unwrap()._rows(), 1);
 }

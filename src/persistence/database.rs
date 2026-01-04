@@ -286,8 +286,8 @@ impl Database {
         Ok(n_deleted)
     }
 
-    pub fn get_table(&self, table_name: String) -> Option<Arc<RwLock<Table>>> {
-        let table = self.tables.get(&table_name)?;
+    pub fn get_table(&self, table_name: &str) -> Option<Arc<RwLock<Table>>> {
+        let table = self.tables.get(table_name)?;
         Some(Arc::clone(table))
     }
 }
