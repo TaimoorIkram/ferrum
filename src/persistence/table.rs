@@ -588,3 +588,17 @@ impl TableReader {
         })
     }
 }
+
+impl Display for TableReader {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        let rows: Vec<String> = self
+            .rows
+            .read()
+            .unwrap()
+            .iter()
+            .map(|row| format!("{}", row))
+            .collect();
+        let schema = self.schema.read().unwrap();
+        writeln!(f, "{}\n{}", schema, rows.join("\n"))
+    }
+}
