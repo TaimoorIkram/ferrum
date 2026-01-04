@@ -3,7 +3,7 @@ use std::{
     sync::{Arc, RwLock},
 };
 
-use crate::persistence::index::ForeignKeyConstraint;
+use crate::persistence::{Row, index::ForeignKeyConstraint};
 
 use super::table::Table;
 
@@ -178,7 +178,7 @@ impl Database {
         table_name: &str,
         pk: Vec<&str>,
         data: HashMap<String, String>,
-    ) {
+    ) -> Result<usize, String> {
         //! Update the data in `pk` row to `data` and cascade changes.
         //!
         //! - The function first reads through the table's schema to verify new data.
@@ -188,9 +188,60 @@ impl Database {
         //!
         //! # Issues
         //! - How does cascading effect take place after a successful update?
+
+        let mut table = {
+            if let Some(_t) = self.tables.get(table_name) {
+                _t.write().unwrap()
+            } else {
+                return Err(format!("err: does not exist: table {}", table_name));
+            }
+        };
+
+        for (column_name, value) in data.iter() {
+            if let Some(constraint) = table
+                .schema
+                .read()
+                .unwrap()
+                .get_foreign_key_constraint(column_name)
+            {
+                if !self._validate_foreign_key(&constraint.table_name, &value)? {
+                    return Err(format!(
+                        "err: does not exist: key '{}' on table '{}'",
+                        &value, &constraint.table_name
+                    ));
+                }
+            }
+        }
+
+        table.update(pk, data)
     }
 
-    pub fn delete_from_table_value(&mut self, table_name: &str, pk: Vec<&str>) {
+    pub fn update_table_set_many(
+        &mut self,
+        table_name: &str,
+        pks: Vec<Vec<&str>>,
+        values: Vec<HashMap<String, String>>,
+    ) -> Result<usize, String> {
+        //! Perform more than one of the same kind of changes on the same table.
+        //!
+        //! Returns the total number of processed rows.
+        //! This is not atomic. Rows processed before error will not be reversed post-error.
+        //!
+        //! Issues
+        //! - The way the values are currently handled could be made better but the strategy
+        //! is not obvious for now
+
+        let mut n_updated = 0;
+
+        for (pk, data) in pks.into_iter().zip(values) {
+            self.update_table_set(table_name, pk, data)?;
+            n_updated += 1;
+        }
+
+        Ok(n_updated)
+    }
+
+    pub fn delete_from_table_value(&mut self, table_name: &str, pk: Vec<&str>) -> Result<Row, String> {
         //! Delete the data in `pk` row and cascade changes.
         //!
         //! - Find the target row and remove it.
@@ -198,7 +249,41 @@ impl Database {
         //! of the constraints.
         //!
         //! # Issues
-        //! - How does cascading effect take place after a successful update?
+        //! - How does cascading effect take place after a successful delete?
+        
+        let mut table = {
+            if let Some(_t) = self.tables.get_mut(table_name) {
+                _t.write().unwrap()
+            } else {
+                return Err(format!("err: does not exist: table {}", table_name));
+            }
+        };
+
+        table.delete(pk)
+    }
+
+    pub fn delete_from_table_values(
+        &mut self,
+        table_name: &str,
+        pks: Vec<Vec<&str>>,
+    ) -> Result<usize, String> {
+        //! Perform more than one deletions on the same table.
+        //!
+        //! Returns the total number of processed rows.
+        //! This is not atomic. Rows processed before error will not be reversed post-error.
+        //!
+        //! Issues
+        //! - The way the values are currently handled could be made better but the strategy
+        //! is not obvious for now
+
+        let mut n_deleted = 0;
+
+        for pk in pks {
+            self.delete_from_table_value(table_name, pk)?;
+            n_deleted += 1;
+        }
+
+        Ok(n_deleted)
     }
 
     pub fn get_table(&self, table_name: String) -> Option<Arc<RwLock<Table>>> {

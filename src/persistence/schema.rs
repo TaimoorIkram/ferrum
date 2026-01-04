@@ -85,6 +85,24 @@ impl Schema {
             .collect()
     }
 
+    pub(crate) fn get_foreign_key_constraint(
+        &self,
+        column_name: &str,
+    ) -> Option<ForeignKeyConstraint> {
+        //! Get fk constraint for the said column name.
+        //!
+        //! Returns a vector of [`super::index::ForeignKeyConstraint`]s, in order, ignoring those that
+        //! are `None`.
+
+        self.0.iter().find_map(|(name, info)| {
+            if name == column_name {
+                info.foreign_key_constraint.clone()
+            } else {
+                None
+            }
+        })
+    }
+
     pub(crate) fn update_foreign_key_index(&mut self, schema_index: usize, key_index: usize) {
         if let Some((_, col_info)) = self.0.get_mut(schema_index) {
             col_info
