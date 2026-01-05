@@ -128,7 +128,14 @@ impl Display for Schema {
         let schema: Vec<String> = self
             .0
             .iter()
-            .map(|(col, info)| format!("{} ({})", col.as_str(), info.datatype))
+            .map(|(col, info)| {
+                let is_fk = info.foreign_key_constraint.is_some();
+                if is_fk {
+                    return format!("{:10} ({:3} FK)", col.as_str(), info.datatype);
+                } else {
+                    return format!("{:10} ({:6})", col.as_str(), info.datatype);
+                }
+            })
             .collect();
         write!(f, "{}", schema.join(" | "))
     }
