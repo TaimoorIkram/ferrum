@@ -1,13 +1,19 @@
-use std::io::{self, Write};
+use std::{
+    io::{self, Write},
+    sync::{Arc, RwLock},
+};
 
 use colored::Colorize;
 use sqlparser::dialect::MySqlDialect;
 
-use crate::cli::{
-    colors::FERRUM_RED,
-    commands::SqlExecutor,
-    messages::{highlight_argument, system_message},
-    parsers::SqlParser,
+use crate::{
+    cli::{
+        colors::FERRUM_RED,
+        commands::{SqlExecutor, SqlResult},
+        messages::{highlight_argument, system_message},
+        parsers::SqlParser,
+    },
+    persistence::Database,
 };
 
 mod colors;
@@ -38,7 +44,21 @@ fn start_repl() {
         )
     );
 
+    let database = Arc::new(RwLock::new(Database::new("cli_user_database".to_string())));
+    println!(
+        "{}",
+        system_message(
+            "system",
+            format!(
+                "A new database '{}' was automatically created for the duration of this session.",
+                highlight_argument("cli_user_database"),
+            )
+        )
+    );
+
     loop {
+        let mut query_result: Option<SqlResult> = None;
+
         print!("{:6} > ", "ferrum".color(FERRUM_RED).bold());
         io::stdout().flush().unwrap();
 
@@ -73,15 +93,22 @@ fn start_repl() {
                             )
                         );
 
-                        let executor = SqlExecutor::new(statement);
+                        let executor = SqlExecutor::new(statement, &database);
                         match executor.execute() {
-                            Ok(n_stmts) => println!(
-                                "{}",
-                                system_message(
-                                    "ferrum",
-                                    format!("{} query(s) ran successfully!", n_stmts)
-                                )
-                            ),
+                            Ok(result) => {
+                                println!(
+                                    "{}",
+                                    system_message(
+                                        "ferrum",
+                                        format!(
+                                            "{} row(s) processed!",
+                                            result.n_rows_processed.unwrap()
+                                        )
+                                    )
+                                );
+
+                                query_result = Some(result);
+                            }
                             Err(error) => println!("{}", error),
                         }
                     }
@@ -89,6 +116,12 @@ fn start_repl() {
                         println!("{}", error);
                     }
                 };
+            }
+        }
+
+        if let Some(result) = query_result.take() {
+            if let Some(table) = result.table {
+                println!("{}", table)
             }
         }
     }
