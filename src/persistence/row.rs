@@ -19,6 +19,6 @@ impl Display for Row {
                 None => "NIL",
             })
             .collect();
-        write!(f, "{}", row.join(" | "))
+        write!(f, "{:15}", row.join(" | "))
     }
 }
