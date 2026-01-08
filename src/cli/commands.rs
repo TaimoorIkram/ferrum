@@ -333,21 +333,20 @@ impl SqlExecutor {
                 }
 
                 let mut database = self.database.write().unwrap();
-                database.create_table(
-                    table_name,
-                    col_def_map
+                let column_definitions = col_def_map
                         .values()
                         .into_iter()
                         .map(|def| def.join(" "))
-                        .collect(),
-                )?;
+                    .collect();
+
+                database.create_table(table_name, column_definitions)?;
 
                 Ok(SqlResult {
                     table: None,
                     row: None,
                     n_rows_processed: Some(0),
                 })
-            }
+            },
             _ => Err(system_message(
                 "exctr",
                 "This statement is not handled by the engine yet!".to_string(),
