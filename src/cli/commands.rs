@@ -22,6 +22,7 @@ use std::fmt::Display;
 use std::sync::{Arc, RwLock};
 use std::vec;
 
+use indexmap::IndexMap;
 use sqlparser::ast::{
     ColumnDef, ColumnOption, DataType, ObjectName, Select, SelectItem, SetExpr, Statement,
     TableConstraint, TableFactor,
@@ -302,7 +303,7 @@ impl SqlExecutor {
                     .collect::<Vec<_>>()
                     .join(".");
 
-                let mut col_def_map = HashMap::new();
+                let mut col_def_map = IndexMap::new();
 
                 for column_definition in create_table.columns.iter() {
                     let col_name = column_definition.name.value.clone();
