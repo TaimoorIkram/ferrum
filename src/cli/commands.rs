@@ -418,6 +418,25 @@ impl SqlExecutor {
                     ));
                 }
             },
+            Statement::ShowTables { .. } => {
+                let database = self.database.read().unwrap();
+                let table_names = database.get_table_names();
+
+                if table_names.is_empty() {
+                    println!("There are no tables in this database.");
+                } else {
+                    println!("There are {} tables in this database.", table_names.len());
+                    for (index, table_name) in table_names.iter().enumerate() {
+                        println!("{:5}. {:10}", index + 1, table_name);
+                    }
+                }
+
+                return Ok(SqlResult {
+                    table: None,
+                    row: None,
+                    n_rows_processed: Some(0),
+                });
+            },
             Statement::CreateTable(create_table) => {
                 let table_name = create_table
                     .name
