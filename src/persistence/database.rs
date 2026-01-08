@@ -241,7 +241,11 @@ impl Database {
         Ok(n_updated)
     }
 
-    pub fn delete_from_table_value(&mut self, table_name: &str, pk: Vec<&str>) -> Result<Row, String> {
+    pub fn delete_from_table_value(
+        &mut self,
+        table_name: &str,
+        pk: Vec<&str>,
+    ) -> Result<Row, String> {
         //! Delete the data in `pk` row and cascade changes.
         //!
         //! - Find the target row and remove it.
@@ -250,7 +254,7 @@ impl Database {
         //!
         //! # Issues
         //! - How does cascading effect take place after a successful delete?
-        
+
         let mut table = {
             if let Some(_t) = self.tables.get_mut(table_name) {
                 _t.write().unwrap()
@@ -289,5 +293,13 @@ impl Database {
     pub fn get_table(&self, table_name: &str) -> Option<Arc<RwLock<Table>>> {
         let table = self.tables.get(table_name)?;
         Some(Arc::clone(table))
+    }
+
+    pub fn get_table_names(&self) -> Vec<String> {
+        self.tables.keys().cloned().collect()
+    }
+
+    pub fn contains_table(&self, table_name: &str) -> bool {
+        self.tables.contains_key(table_name)
     }
 }
