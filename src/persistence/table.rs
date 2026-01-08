@@ -599,6 +599,12 @@ impl Display for TableReader {
             .map(|row| format!("{}", row))
             .collect();
         let schema = self.schema.read().unwrap();
-        writeln!(f, "{}\n{}", schema, rows.join("\n"))
+        let schema_str = schema.to_string();
+
+        writeln!(f, "+-{}-+", "-".repeat(schema_str.len()))?;
+        writeln!(f, "| {} |", schema_str)?;
+        writeln!(f, "+-{}-+", "-".repeat(schema_str.len()))?;
+        write!(f, "{}", rows.join(""))?;
+        writeln!(f, "+-{}-+", "-".repeat(schema_str.len()))
     }
 }

@@ -11,14 +11,14 @@ pub struct Row(pub Vec<Option<String>>);
 
 impl Display for Row {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        let row: Vec<&str> = self
+        let row: Vec<String> = self
             .0
             .iter()
             .map(|value| match value {
-                Some(string) => string.as_str(),
-                None => "NIL",
+                Some(string) => format!("{:16}", string.as_str()),
+                None => "NIL".to_string(),
             })
             .collect();
-        write!(f, "{:15}", row.join(" | "))
+        writeln!(f, "| {} |", row.join(" | "))
     }
 }
