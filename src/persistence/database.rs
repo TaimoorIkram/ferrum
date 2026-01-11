@@ -173,24 +173,87 @@ impl Database {
         Ok(n_insertions)
     }
 
-    pub fn update_table_set_with_filters(
+    // TODO: Change this to a key validator before filters are applied.
+    pub fn update_table_set(
         &mut self,
         table_name: &str,
-        filter: Option<Box<dyn Fn(&Row) -> bool>>,
-        updates: HashMap<String, String>,
+        pk: Vec<&str>,
+        data: &HashMap<String, String>,
     ) -> Result<usize, String> {
+        //! Update the data in `pk` row to `data` and cascade changes.
+        //!
+        //! - The function first reads through the table's schema to verify new data.
+        //! - If the foreign key is to be updated, then the key is checked as well
+        //! against the schema.
+        //! - After all data and foreign keys have been checked, updation takes place.
+        //!
+        //! # Issues
+        //! - How does cascading effect take place after a successful update?
+
         let mut table = {
-            if let Some(_t) = self.tables.get_mut(table_name) {
+            if let Some(_t) = self.tables.get(table_name) {
                 _t.write().unwrap()
             } else {
                 return Err(format!("err: does not exist: table {}", table_name));
             }
         };
 
-        let updated_row_count;
+        for (column_name, value) in data.iter() {
+            if let Some(constraint) = table
+                .schema
+                .read()
+                .unwrap()
+                .get_foreign_key_constraint(column_name)
+            {
+                if !self._validate_foreign_key(&constraint.table_name, &value)? {
+                    return Err(format!(
+                        "err: does not exist: key '{}' on table '{}'",
+                        &value, &constraint.table_name
+                    ));
+                }
+            }
+        }
+
+        table.update(pk, &data)
+    }
+
+    pub fn update_table_set_with_filters(
+        &mut self,
+        table_name: &str,
+        filter: Option<Box<dyn Fn(&Row) -> bool>>,
+        updates: HashMap<String, String>,
+    ) -> Result<usize, String> {
+        let mut updated_row_count = 0;
         if let Some(filter) = filter {
-            updated_row_count = table.update_many_with_filter(filter, &updates)?;
+            // Filter the data then validate the constraints and then make the insertion
+            let filtered_pks = {
+                let table = {
+                    if let Some(_t) = self.tables.get(table_name) {
+                        _t.write().unwrap()
+                    } else {
+                        return Err(format!("err: does not exist: table {}", table_name));
+                    }
+                };
+                table.filter_rows(filter)?
+            };
+
+            for pk in filtered_pks {
+                self.update_table_set(
+                    table_name,
+                    pk.iter().map(|s| s.as_str()).collect(),
+                    &updates,
+                )?;
+                updated_row_count += 1;
+            }
         } else {
+            let mut table = {
+                if let Some(_t) = self.tables.get_mut(table_name) {
+                    _t.write().unwrap()
+                } else {
+                    return Err(format!("err: does not exist: table {}", table_name));
+                }
+            };
+
             updated_row_count = table.update_all(&updates)?;
         }
 
@@ -259,9 +322,9 @@ impl Database {
         let table = self.get_table(table_name).unwrap();
         let mut table_ref = table.write().unwrap();
 
-        let mut deleted_row_count;
+        let deleted_row_count;
         if let Some(filter) = filter {
-            deleted_row_count = table_ref.delete_many_with_filter(filter)?;
+            deleted_row_count = table_ref.delete_with_filter(filter)?;
         } else {
             deleted_row_count = table_ref.delete_all();
         }

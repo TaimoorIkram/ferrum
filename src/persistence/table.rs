@@ -433,11 +433,15 @@ impl Table {
         Ok(col_updated)
     }
 
-    pub fn update_many_with_filter(
-        &mut self,
+    pub fn filter_rows(
+        &self,
         filter: Box<dyn Fn(&Row) -> bool>,
-        updates: &HashMap<String, String>,
-    ) -> Result<usize, String> {
+    ) -> Result<Vec<Vec<String>>, String> {
+        //! Apply a filter to obtain qualifying rows.
+        //! 
+        //! Returns the primary keys of these rows to lookup and validate
+        //! constraints before updating the table.
+
         let pks: Vec<Vec<String>> = {
             let rows = self.rows.read().unwrap();
             rows.iter()
@@ -450,19 +454,8 @@ impl Table {
                 })
                 .collect()
         };
-
-        let pks: Vec<Vec<&str>> = pks
-            .iter()
-            .map(|item| item.iter().map(|item2| item2.as_str()).collect())
-            .collect();
-
-        let mut updated_row_count = 0;
-        for pk in pks {
-            self.update(pk, updates)?;
-            updated_row_count += 1;
-        }
-
-        Ok(updated_row_count)
+        
+        Ok(pks)
     }
 
     pub fn update_all(&mut self, updates: &HashMap<String, String>) -> Result<usize, String> {
@@ -486,7 +479,7 @@ impl Table {
 
         let mut updated_row_count = 0;
         for pk in pks {
-            self.update(pk.iter().map(|s| s.as_str()).collect(), updates);
+            self.update(pk.iter().map(|s| s.as_str()).collect(), updates)?;
             updated_row_count += 1;
         }
 
@@ -521,7 +514,7 @@ impl Table {
         }
     }
 
-    pub fn delete_many_with_filter(
+    pub fn delete_with_filter(
         &mut self,
         filter: Box<dyn Fn(&Row) -> bool>,
     ) -> Result<usize, String> {
@@ -540,7 +533,7 @@ impl Table {
 
         let mut updated_row_count = 0;
         for pk in pks {
-            self.delete(pk.iter().map(|s| s.as_str()).collect());
+            self.delete(pk.iter().map(|s| s.as_str()).collect())?;
             updated_row_count += 1;
         }
 
