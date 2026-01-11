@@ -17,14 +17,16 @@
 //!
 //! Here * means more than one such values separated by a comma.
 
+use std::collections::HashMap;
 use std::fmt::Display;
 use std::sync::{Arc, RwLock};
 use std::vec;
 
 use indexmap::IndexMap;
 use sqlparser::ast::{
-    ColumnDef, ColumnOption, DataType, Expr, ObjectName, Select, SelectItem, SetExpr, Statement,
-    TableConstraint, TableFactor, TableObject, Value, ValueWithSpan,
+    Assignment, BinaryOperator, ColumnDef, ColumnOption, DataType, Expr, ObjectName, Select,
+    SelectItem, SetExpr, Statement, TableConstraint, TableFactor, TableObject, TableWithJoins,
+    Value, ValueWithSpan,
 };
 
 use crate::cli::messages::{highlight_argument, system_message};
@@ -64,7 +66,6 @@ pub struct SqlExecutor {
 /// use the Display trait more effectively (food for thought).
 pub struct SqlResult {
     pub table: Option<TableReader>,
-    pub row: Option<Row>,
     pub n_rows_processed: Option<usize>,
 }
 
@@ -119,12 +120,7 @@ impl SqlExecutor {
         Ok(column_names)
     }
 
-    fn _extract_table_name(&self, select: &Select) -> Result<String, String> {
-        let table_with_joins = select.from.first().ok_or(system_message(
-            "exctr",
-            "There is no table name after FROM keyword.".to_string(),
-        ))?;
-
+    fn _extract_table_name(&self, table_with_joins: &TableWithJoins) -> Result<String, String> {
         match &table_with_joins.relation {
             TableFactor::Table { name, .. } => Ok(name
                 .0
@@ -233,17 +229,44 @@ impl SqlExecutor {
         }
     }
 
-    fn _parse_value_to_engine(&self, value: ValueWithSpan) -> Result<(String, String), String> {
+    fn _parse_expr(&self, expr: &Expr) -> Result<String, String> {
+        match expr {
+            Expr::Value(value) => self._parse_value(&value),
+            Expr::Identifier(ident) => Ok(ident.value.clone()),
+            Expr::UnaryOp { op, expr } => {
+                let value = self._parse_expr(expr)?;
+                let prefix = match op {
+                    sqlparser::ast::UnaryOperator::Minus => "-",
+                    _ => {
+                        return Err(system_message(
+                            "system",
+                            "Unsupported unary operator.".to_string(),
+                        ));
+                    }
+                };
+
+                Ok(format!("{}{}", prefix, value))
+            }
+            _ => {
+                return Err(system_message(
+                    "system",
+                    "Unsupported value. Check your query.".to_string(),
+                ));
+            }
+        }
+    }
+
+    fn _parse_value(&self, value: &ValueWithSpan) -> Result<String, String> {
         //! Match the [`Value`] object properly to its subtype and return the
         //! engine-specific (value, datatype) mapping.
         //!
         //! This function is a utility to allow data insertion format to align
         //! with the one accepted by the persistence API
 
-        let value = match value.value {
-            Value::Number(value, _) => (value, "num".to_string()),
-            Value::SingleQuotedString(value) => (value, "txt".to_string()),
-            Value::DoubleQuotedString(value) => (value, "txt".to_string()),
+        let value = match &value.value {
+            Value::Number(value, _) => value,
+            Value::SingleQuotedString(value) => value,
+            Value::DoubleQuotedString(value) => value,
             _ => {
                 return Err(system_message(
                     "system",
@@ -255,7 +278,7 @@ impl SqlExecutor {
             }
         };
 
-        Ok(value)
+        Ok(value.into())
     }
 
     fn _extract_row(&self, values: Vec<Expr>) -> Result<Vec<String>, String> {
@@ -270,45 +293,99 @@ impl SqlExecutor {
         //! to call recursively itself, untul a [`ValueWithSpan`] is obtained, that
         //! can then be parsed using the [`self._parse_value_to_engine`] function.
 
-        let mut row = vec![];
+        values.into_iter().map(|e| self._parse_expr(&e)).collect()
+    }
 
-        for value in values {
-            match value {
-                Expr::Value(value) => row.push(self._parse_value_to_engine(value)?.0),
-                Expr::UnaryOp { op, expr } => {
-                    let value_with_span = match expr.as_ref() {
-                        Expr::Value(value) => value.clone(),
-                        _ => {
-                            return Err(system_message("system", "Unsupported value.".to_string()));
-                        }
-                    };
+    fn _parse_selection(
+        &self,
+        selection: &Expr,
+        table_schema_vec: &Vec<String>,
+    ) -> Result<Box<dyn Fn(&Row) -> bool>, String> {
+        //! Parse the [`Expr::BinaryOp`] variant to a filter.
+        //!
+        //! Returns a closure `Fn(&Row) -> bool` that takes a row to check
+        //! if it is a fit over the filter. I intend it to be used inside a filter
+        //! function on a tabler reader as well.
+        //!
+        //! Filter flow: the filter function can NOT directly access the table and
+        //! the row index, therefore, we rely directly on the database to do this for
+        //! us. In that case, we will have to pass the left and right values to the
+        //! database, restructure them to map them to the table and run the final
+        //! filter to get the resultant rows.
 
-                    let sign = match op {
-                        sqlparser::ast::UnaryOperator::Minus => "-",
-                        _ => {
-                            return Err(system_message(
-                                "system",
-                                "Unsupported unary operator.".to_string(),
-                            ));
-                        }
-                    };
+        match selection {
+            Expr::BinaryOp { left, op, right } => match op {
+                BinaryOperator::Or => {
+                    let left_filter = self._parse_selection(left, table_schema_vec)?;
+                    let right_filter = self._parse_selection(right, table_schema_vec)?;
 
-                    let final_value = vec![
-                        sign.to_string(),
-                        self._parse_value_to_engine(value_with_span)?.0,
-                    ];
-                    row.push(final_value.join(""));
+                    Ok(Box::new(move |row| left_filter(row) || right_filter(row)))
                 }
-                _ => {
-                    return Err(system_message(
-                        "system",
-                        "Unsupported value. Check your query.".to_string(),
-                    ));
+                BinaryOperator::And => {
+                    let left_filter = self._parse_selection(left, table_schema_vec)?;
+                    let right_filter = self._parse_selection(right, table_schema_vec)?;
+
+                    Ok(Box::new(move |row| left_filter(row) && right_filter(row)))
+                }
+                BinaryOperator::Eq => {
+                    let (col_index, value) =
+                        self._parse_operands(left.as_ref(), right.as_ref(), table_schema_vec)?;
+
+                    Ok(Box::new(move |row| {
+                        row.0
+                            .get(col_index)
+                            .and_then(|v| v.as_ref())
+                            .map_or(false, |v| v == &value)
+                    }))
+                }
+                BinaryOperator::NotEq => {
+                    let (col_index, value) =
+                        self._parse_operands(left.as_ref(), right.as_ref(), table_schema_vec)?;
+
+                    Ok(Box::new(move |row| {
+                        row.0
+                            .get(col_index)
+                            .and_then(|v| v.as_ref())
+                            .map_or(false, |v| v != &value)
+                    }))
+                }
+                _ => Err(format!("Invalid query filter. Check your query.")),
+            },
+            _ => Err(format!("Invalid column selection. Check your query.")),
+        }
+    }
+
+    fn _parse_operands(
+        &self,
+        left: &Expr,
+        right: &Expr,
+        table_schema_vec: &Vec<String>,
+    ) -> Result<(usize, String), String> {
+        let col_name = self._parse_expr(left)?;
+        let value = self._parse_expr(right)?;
+
+        let col_index = table_schema_vec
+            .iter()
+            .position(|col| col == &col_name)
+            .ok_or_else(|| format!("Column {} does not exist!", highlight_argument(&col_name)))?;
+
+        Ok((col_index, value))
+    }
+
+    fn _parse_assignment(&self, assignment: Assignment) -> Result<(String, String), String> {
+        let col_name = match assignment.target {
+            sqlparser::ast::AssignmentTarget::ColumnName(object) => {
+                if let Some(object_name) = object.0.first() {
+                    object_name.as_ident().unwrap().value.clone()
+                } else {
+                    return Err(format!("Invalid column name format."));
                 }
             }
-        }
+            _ => return Err(format!("Invalid column name. Check your query.")),
+        };
+        let value = self._parse_expr(&assignment.value)?;
 
-        Ok(row)
+        Ok((col_name, value))
     }
 
     pub fn new(statement: Statement, database: &Arc<RwLock<Database>>) -> SqlExecutor {
@@ -323,7 +400,11 @@ impl SqlExecutor {
             Statement::Query(query) => match query.body.as_ref() {
                 SetExpr::Select(select) => {
                     let column_names = self._extract_column_names(select)?;
-                    let table_name = self._extract_table_name(select)?;
+                    let table_with_joins = select.from.first().ok_or(system_message(
+                        "exctr",
+                        "There is no table name after FROM keyword.".to_string(),
+                    ))?;
+                    let table_name = self._extract_table_name(table_with_joins)?;
 
                     println!(
                         "{}",
@@ -345,18 +426,31 @@ impl SqlExecutor {
                     let database = self.database.read().unwrap();
                     if let Some(table) = database.get_table(&table_name) {
                         let table = table.read().unwrap();
+                        let table_schema_vec: Vec<String> = {
+                            let schema = table.schema.read().unwrap();
+                            schema
+                                .get_vec()
+                                .iter()
+                                .map(|(col, _)| col)
+                                .cloned()
+                                .collect()
+                        };
                         let reader = table.reader();
 
-                        let result_table;
+                        let mut result_table;
                         if column_names.contains(&"*".to_string()) {
                             result_table = table.reader();
                         } else {
                             result_table = reader.select(column_names)?;
                         }
 
+                        if let Some(selection) = select.selection.as_ref() {
+                            let filter = self._parse_selection(selection, &table_schema_vec)?;
+                            result_table = result_table.filter(filter).unwrap();
+                        }
+
                         Ok(SqlResult {
                             table: Some(result_table),
-                            row: None,
                             n_rows_processed: Some(table._rows()),
                         })
                     } else {
@@ -408,7 +502,6 @@ impl SqlExecutor {
 
                     Ok(SqlResult {
                         table: None,
-                        row: None,
                         n_rows_processed: Some(inserted_row_count),
                     })
                 } else {
@@ -417,7 +510,7 @@ impl SqlExecutor {
                         format!("Table {} does not exist.", highlight_argument(&table_name)),
                     ));
                 }
-            },
+            }
             Statement::ShowTables { .. } => {
                 let database = self.database.read().unwrap();
                 let table_names = database.get_table_names();
@@ -433,10 +526,9 @@ impl SqlExecutor {
 
                 return Ok(SqlResult {
                     table: None,
-                    row: None,
                     n_rows_processed: Some(0),
                 });
-            },
+            }
             Statement::CreateTable(create_table) => {
                 let table_name = create_table
                     .name
@@ -486,10 +578,101 @@ impl SqlExecutor {
 
                 Ok(SqlResult {
                     table: None,
-                    row: None,
                     n_rows_processed: Some(0),
                 })
-            },
+            }
+            Statement::Delete(delete) => {
+                let table_name = match &delete.from {
+                    sqlparser::ast::FromTable::WithFromKeyword(joins) => {
+                        let table_with_joins = joins.first().ok_or(system_message(
+                            "exctr",
+                            "There is no table name after FROM keyword.".to_string(),
+                        ))?;
+                        self._extract_table_name(table_with_joins)?
+                    }
+                    _ => return Err("Invalid DELETE statement.".to_string()),
+                };
+
+                let mut database = self.database.write().unwrap();
+                if database.contains_table(&table_name) {
+                    // CAUTION: LOCK HOLD PROBLEM
+                    // The following expression solves an issue of infinite read locking
+                    // on table (first two lines were before table_schema_vec definition)
+                    // causing the database.delete... methods to wait on read lock to
+                    // finish and then start a write lock, which would cause the engine to
+                    // hang indefinitely. The database api might need a few additions
+                    let table_schema_vec = {
+                        let _tl = database.get_table(&table_name).unwrap();
+                        let _t = _tl.read().unwrap();
+                        let _s = _t.schema.read().unwrap();
+                        _s.get_vec().iter().map(|(col, _)| col.clone()).collect()
+                    };
+
+                    let mut filter = None;
+                    if let Some(selection) = delete.selection.as_ref() {
+                        filter = self._parse_selection(selection, &table_schema_vec).ok();
+                    }
+
+                    let deleted_row_count =
+                        database.delete_from_table_with_filter(&table_name, filter)?;
+
+                    Ok(SqlResult {
+                        table: None,
+                        n_rows_processed: Some(deleted_row_count),
+                    })
+                } else {
+                    Err(system_message(
+                        "system",
+                        format!("Table {} does not exist!", highlight_argument(&table_name)),
+                    ))
+                }
+            }
+            Statement::Update(update) => {
+                let table_with_joins = &update.table;
+                let table_name = self._extract_table_name(table_with_joins)?;
+
+                let mut database = self.database.write().unwrap();
+
+                if database.contains_table(&table_name) {
+                    // CAUTION: LOCK HOLD PROBLEM
+                    // The following expression solves an issue of infinite read locking
+                    // on table (first two lines were before table_schema_vec definition)
+                    // causing the database.delete... methods to wait on read lock to
+                    // finish and then start a write lock, which would cause the engine to
+                    // hang indefinitely. The database api might need a few additions
+                    let table_schema_vec: Vec<String> = {
+                        let _tl = database.get_table(&table_name).unwrap();
+                        let _t = _tl.read().unwrap();
+                        let _s = _t.schema.read().unwrap();
+                        _s.get_vec().iter().map(|(col, _)| col.clone()).collect()
+                    };
+
+                    let mut filter = None;
+                    if let Some(selection) = update.selection.clone() {
+                        filter = self._parse_selection(&selection, &table_schema_vec).ok();
+                    }
+
+                    let mut updates = HashMap::new();
+                    for assignment in update.assignments.clone() {
+                        let update = self._parse_assignment(assignment)?;
+                        updates.insert(update.0, update.1);
+                    }
+
+                    let updated_row_count;
+                    updated_row_count =
+                        database.update_table_set_with_filters(&table_name, filter, updates)?;
+
+                    Ok(SqlResult {
+                        table: None,
+                        n_rows_processed: Some(updated_row_count),
+                    })
+                } else {
+                    Err(system_message(
+                        "system",
+                        format!("Table {} does not exist!", highlight_argument(&table_name)),
+                    ))
+                }
+            }
             _ => Err(system_message(
                 "exctr",
                 "This statement is not handled by the engine yet!".to_string(),

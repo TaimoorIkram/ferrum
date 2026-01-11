@@ -173,72 +173,28 @@ impl Database {
         Ok(n_insertions)
     }
 
-    pub fn update_table_set(
+    pub fn update_table_set_with_filters(
         &mut self,
         table_name: &str,
-        pk: Vec<&str>,
-        data: HashMap<String, String>,
+        filter: Option<Box<dyn Fn(&Row) -> bool>>,
+        updates: HashMap<String, String>,
     ) -> Result<usize, String> {
-        //! Update the data in `pk` row to `data` and cascade changes.
-        //!
-        //! - The function first reads through the table's schema to verify new data.
-        //! - If the foreign key is to be updated, then the key is checked as well
-        //! against the schema.
-        //! - After all data and foreign keys have been checked, updation takes place.
-        //!
-        //! # Issues
-        //! - How does cascading effect take place after a successful update?
-
         let mut table = {
-            if let Some(_t) = self.tables.get(table_name) {
+            if let Some(_t) = self.tables.get_mut(table_name) {
                 _t.write().unwrap()
             } else {
                 return Err(format!("err: does not exist: table {}", table_name));
             }
         };
 
-        for (column_name, value) in data.iter() {
-            if let Some(constraint) = table
-                .schema
-                .read()
-                .unwrap()
-                .get_foreign_key_constraint(column_name)
-            {
-                if !self._validate_foreign_key(&constraint.table_name, &value)? {
-                    return Err(format!(
-                        "err: does not exist: key '{}' on table '{}'",
-                        &value, &constraint.table_name
-                    ));
-                }
-            }
+        let updated_row_count;
+        if let Some(filter) = filter {
+            updated_row_count = table.update_many_with_filter(filter, &updates)?;
+        } else {
+            updated_row_count = table.update_all(&updates)?;
         }
 
-        table.update(pk, data)
-    }
-
-    pub fn update_table_set_many(
-        &mut self,
-        table_name: &str,
-        pks: Vec<Vec<&str>>,
-        values: Vec<HashMap<String, String>>,
-    ) -> Result<usize, String> {
-        //! Perform more than one of the same kind of changes on the same table.
-        //!
-        //! Returns the total number of processed rows.
-        //! This is not atomic. Rows processed before error will not be reversed post-error.
-        //!
-        //! Issues
-        //! - The way the values are currently handled could be made better but the strategy
-        //! is not obvious for now
-
-        let mut n_updated = 0;
-
-        for (pk, data) in pks.into_iter().zip(values) {
-            self.update_table_set(table_name, pk, data)?;
-            n_updated += 1;
-        }
-
-        Ok(n_updated)
+        Ok(updated_row_count)
     }
 
     pub fn delete_from_table_value(
@@ -288,6 +244,29 @@ impl Database {
         }
 
         Ok(n_deleted)
+    }
+
+    pub fn delete_from_table_with_filter(
+        &mut self,
+        table_name: &str,
+        filter: Option<Box<dyn Fn(&Row) -> bool>>,
+    ) -> Result<usize, String> {
+        //! Perform more than one deletions on the same table via filters.
+        //!
+        //! Returns the total number of processed rows.
+        //! This is not atomic. Rows processed before error will not be reversed post-error.
+
+        let table = self.get_table(table_name).unwrap();
+        let mut table_ref = table.write().unwrap();
+
+        let mut deleted_row_count;
+        if let Some(filter) = filter {
+            deleted_row_count = table_ref.delete_many_with_filter(filter)?;
+        } else {
+            deleted_row_count = table_ref.delete_all();
+        }
+
+        Ok(deleted_row_count)
     }
 
     pub fn get_table(&self, table_name: &str) -> Option<Arc<RwLock<Table>>> {

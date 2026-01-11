@@ -400,7 +400,7 @@ impl Table {
     pub fn update(
         &mut self,
         pk: Vec<&str>,
-        updates: HashMap<String, String>,
+        updates: &HashMap<String, String>,
     ) -> Result<usize, String> {
         //! Update specific columns of a row of a table from its primary key.
         //!
@@ -418,18 +418,79 @@ impl Table {
             let index = schema
                 .get_vec()
                 .iter()
-                .position(|(s_key, _)| col_name == *s_key)
+                .position(|(s_key, _)| col_name == s_key)
                 .ok_or_else(|| format!("unexpected {}: no such column exists", col_name))?;
 
             let (_, col_info) = schema.get(index).expect("err: invalid index");
 
-            let validated_value = self._validate_field(col_data, &col_name, col_info)?;
+            let validated_value =
+                self._validate_field(col_data.to_string(), &col_name, col_info)?;
 
             row[index] = validated_value;
             col_updated += 1;
         }
 
         Ok(col_updated)
+    }
+
+    pub fn update_many_with_filter(
+        &mut self,
+        filter: Box<dyn Fn(&Row) -> bool>,
+        updates: &HashMap<String, String>,
+    ) -> Result<usize, String> {
+        let pks: Vec<Vec<String>> = {
+            let rows = self.rows.read().unwrap();
+            rows.iter()
+                .filter(|row| filter(*row))
+                .map(|row| {
+                    self._extract_pk_values(row)
+                        .iter()
+                        .map(|s| s.to_string())
+                        .collect()
+                })
+                .collect()
+        };
+
+        let pks: Vec<Vec<&str>> = pks
+            .iter()
+            .map(|item| item.iter().map(|item2| item2.as_str()).collect())
+            .collect();
+
+        let mut updated_row_count = 0;
+        for pk in pks {
+            self.update(pk, updates)?;
+            updated_row_count += 1;
+        }
+
+        Ok(updated_row_count)
+    }
+
+    pub fn update_all(&mut self, updates: &HashMap<String, String>) -> Result<usize, String> {
+        //! A non-atomic update for applying an update across the table if no filter
+        //! is provided.
+        //!
+        //! Returns the total number of updated rows, which should always be the size
+        //! of the table (total rows in it).
+
+        let pks: Vec<Vec<String>> = {
+            let rows = self.rows.read().unwrap();
+            rows.iter()
+                .map(|row| {
+                    self._extract_pk_values(row)
+                        .iter()
+                        .map(|s| s.to_string())
+                        .collect()
+                })
+                .collect()
+        };
+
+        let mut updated_row_count = 0;
+        for pk in pks {
+            self.update(pk.iter().map(|s| s.as_str()).collect(), updates);
+            updated_row_count += 1;
+        }
+
+        Ok(updated_row_count)
     }
 
     pub fn delete(&mut self, pk: Vec<&str>) -> Result<Row, String> {
@@ -460,25 +521,42 @@ impl Table {
         }
     }
 
-    pub fn delete_many(&mut self, pks: Vec<Vec<&str>>) -> Result<usize, String> {
-        //! Bulk delete operation, uses the same delete function inside it.
-        //!
-        //! Returns the total number of successful deletions
-        //!
-        //! Deletion is not transactional! Error during deletion stops the
-        //! deletions after it, but keeps the ones prior.
-        //!
-        //! In the future, multi-threading may help speed up the working of
-        //! this function.
+    pub fn delete_many_with_filter(
+        &mut self,
+        filter: Box<dyn Fn(&Row) -> bool>,
+    ) -> Result<usize, String> {
+        let pks: Vec<Vec<String>> = {
+            let rows = self.rows.read().unwrap();
+            rows.iter()
+                .filter(|row| filter(*row))
+                .map(|row| {
+                    self._extract_pk_values(row)
+                        .iter()
+                        .map(|s| s.to_string())
+                        .collect()
+                })
+                .collect()
+        };
 
-        let mut n_deletions = 0;
-
+        let mut updated_row_count = 0;
         for pk in pks {
-            self.delete(pk)?;
-            n_deletions += 1;
+            self.delete(pk.iter().map(|s| s.as_str()).collect());
+            updated_row_count += 1;
         }
 
-        Ok(n_deletions)
+        Ok(updated_row_count)
+    }
+
+    pub fn delete_all(&mut self) -> usize {
+        //! Clears all rows of the table.
+        //!
+        //! Returns the total number of deleted rows, the size of the table.
+
+        let mut rows = self.rows.write().unwrap();
+        let row_count = rows.iter().count();
+        rows.clear();
+
+        row_count
     }
 
     pub fn reader(&self) -> TableReader {

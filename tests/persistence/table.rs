@@ -242,7 +242,7 @@ fn table_update_noerror() {
     updates.insert("name".to_string(), "Momarian".to_string());
     let update_key = vec!["4"];
 
-    let cols_updated = table.update(update_key, updates.clone()).unwrap();
+    let cols_updated = table.update(update_key, &updates).unwrap();
     let reader = table.reader();
     let rows = reader.scan();
 
@@ -270,7 +270,7 @@ fn table_update_error() {
     updates.insert("name".to_string(), "".to_string());
     let update_key = vec!["4"];
 
-    let cols_updated = table.update(update_key, updates.clone()).unwrap();
+    let cols_updated = table.update(update_key, &updates).unwrap();
     let reader = table.reader();
     let rows = reader.scan();
 
@@ -324,52 +324,4 @@ fn table_delete_indexed() {
 
     let reader = table.reader();
     assert_eq!(reader.scan()[1].0[0], Some("3".to_string()));
-}
-
-#[test]
-fn table_delete_many_not_indexed() {
-    let mut table = _create_table(vec!["id num", "name txt"]).unwrap();
-    let values = vec![
-        ("1", "Jansen"),
-        ("2", "Bonega"),
-        ("3", "Maharashtra"),
-        ("4", "Lorem"),
-    ]
-    .iter()
-    .map(|(id, name)| vec![id.to_string(), name.to_string()])
-    .collect();
-
-    let _num_insertions = table.insert_many(values);
-
-    let deletion_pks = vec![vec!["1"], vec!["2"]];
-
-    let deleted_row_count = table.delete_many(deletion_pks).unwrap();
-    assert_eq!(deleted_row_count, 2);
-
-    let reader = table.reader();
-    assert_eq!(reader.scan()[0].0[0], Some("3".to_string()));
-}
-
-#[test]
-fn table_delete_many_indexed() {
-    let mut table = _create_table(vec!["id num pk", "name txt"]).unwrap();
-    let values = vec![
-        ("1", "Jansen"),
-        ("2", "Bonega"),
-        ("3", "Maharashtra"),
-        ("4", "Lorem"),
-    ]
-    .iter()
-    .map(|(id, name)| vec![id.to_string(), name.to_string()])
-    .collect();
-
-    let _num_insertions = table.insert_many(values);
-
-    let deletion_pks = vec![vec!["1"], vec!["2"]];
-
-    let deleted_row_count = table.delete_many(deletion_pks).unwrap();
-    assert_eq!(deleted_row_count, 2);
-
-    let reader = table.reader();
-    assert_eq!(reader.scan()[0].0[0], Some("3".to_string()));
 }
