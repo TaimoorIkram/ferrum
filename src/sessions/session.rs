@@ -14,7 +14,7 @@
 //! A session in client mode will deal with client specific attributes. Things
 //! like, but not exactly:
 //! - command history
-//! - event logs 
+//! - event logs
 //!
 //! ## Server Session
 //! A server session (reserved for later use) will allow a separate listener
@@ -25,3 +25,19 @@
 //! At the end of each of these sessions, these objects will be discarded until
 //! I decide to implement a session logging mechanism to store separately the
 //! user data.
+
+use std::{
+    sync::{Arc, RwLock},
+    time::SystemTime,
+};
+
+use crate::persistence::Database;
+
+pub enum Session {
+    ClientSession {
+        command_history: Vec<String>,
+        start_time: SystemTime,
+        active_database: Arc<RwLock<Database>>,
+    },
+    ServerSession,
+}
