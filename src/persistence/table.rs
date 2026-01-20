@@ -438,7 +438,7 @@ impl Table {
         filter: Box<dyn Fn(&Row) -> bool>,
     ) -> Result<Vec<Vec<String>>, String> {
         //! Apply a filter to obtain qualifying rows.
-        //! 
+        //!
         //! Returns the primary keys of these rows to lookup and validate
         //! constraints before updating the table.
 
@@ -454,7 +454,7 @@ impl Table {
                 })
                 .collect()
         };
-        
+
         Ok(pks)
     }
 
@@ -657,6 +657,40 @@ impl TableReader {
             schema: Arc::new(RwLock::new(new_schema)),
             rows: Arc::new(RwLock::new(rows)),
         })
+    }
+
+    pub fn order_by(self, sort_index: Vec<(usize, bool)>) -> TableReader {
+        //! Order the table by the index, in ascending or descending order.
+        //!
+        //! Takes in the sort index which is the index of the column, and the ascending
+        //! order flag.
+        //!
+        //! Returns a new [`TableReader`] with sorted rows, consuming itself.
+
+        let mut rows = {
+            let _rl = self.rows.write().unwrap();
+            _rl.clone()
+        };
+
+        rows.sort_by(|a, b| {
+            let mut ordering = std::cmp::Ordering::Equal;
+
+            for (col_index, is_ascending) in sort_index.iter() {
+                let cmp = a.0.get(*col_index).cmp(&b.0.get(*col_index));
+                ordering = if *is_ascending { cmp } else { cmp.reverse() };
+
+                if ordering != std::cmp::Ordering::Equal {
+                    break;
+                }
+            }
+
+            ordering
+        });
+
+        return TableReader {
+            schema: self.schema,
+            rows: Arc::new(RwLock::new(rows)),
+        };
     }
 }
 

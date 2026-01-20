@@ -24,9 +24,9 @@ use std::vec;
 
 use indexmap::IndexMap;
 use sqlparser::ast::{
-    Assignment, BinaryOperator, ColumnDef, ColumnOption, DataType, Expr, ObjectName, Select,
-    SelectItem, SetExpr, Statement, TableConstraint, TableFactor, TableObject, TableWithJoins,
-    Value, ValueWithSpan,
+    Assignment, BinaryOperator, ColumnDef, ColumnOption, DataType, Expr, ObjectName, OrderBy,
+    Select, SelectItem, SetExpr, Statement, TableConstraint, TableFactor, TableObject,
+    TableWithJoins, Value, ValueWithSpan,
 };
 
 use crate::cli::messages::{highlight_argument, system_message};
@@ -388,6 +388,66 @@ impl SqlExecutor {
         Ok((col_name, value))
     }
 
+    fn _order_by(
+        &self,
+        query_result: SqlResult,
+        query_table_name: &String,
+        order_by: &OrderBy,
+    ) -> Result<SqlResult, String> {
+        //! Process filters on the resulting query and return the final result.
+
+        match &order_by.kind {
+            sqlparser::ast::OrderByKind::Expressions(expressions) => {
+                // Iterate over each and make a filter that orders by priority
+                // meaning the first filter applies first, then the second among
+                // each of the first and then the third among each group of second
+                let mut sort_index = vec![];
+
+                for order in expressions.iter() {
+                    if order.options.asc.is_none() {
+                        return Ok(query_result);
+                    } else {
+                        if let Some(asc) = order.options.asc {
+                            let identifier = self._parse_expr(&order.expr)?;
+
+                            let database = self.database.read().unwrap();
+
+                            // get the table object ref and then derive index of that column from it
+                            let table_lock = database.get_table(&query_table_name).unwrap();
+                            let table = table_lock.write().unwrap();
+                            let schema = table.schema.read().unwrap();
+                            let col_index = schema
+                                .get_vec()
+                                .iter()
+                                .position(|(col_name, _)| &identifier == col_name);
+
+                            if let Some(col_index) = col_index {
+                                sort_index.push((col_index, asc));
+                            }
+                        }
+                    }
+                }
+
+                println!(
+                    "{}",
+                    system_message("sorter", format!("Sorting data by order: {:?}", sort_index))
+                );
+
+                let table_reader = query_result.table.unwrap();
+                Ok(SqlResult {
+                    table: Some(table_reader.order_by(sort_index)),
+                    n_rows_processed: Some(260),
+                })
+            }
+            _ => {
+                return Err(system_message(
+                    "exctr",
+                    "Can not order by this kind of filter!".to_string(),
+                ));
+            }
+        }
+    }
+
     pub fn new(statement: Statement, database: &Arc<RwLock<Database>>) -> SqlExecutor {
         SqlExecutor {
             statement,
@@ -397,74 +457,84 @@ impl SqlExecutor {
 
     pub fn execute(&self) -> Result<SqlResult, String> {
         match &self.statement {
-            Statement::Query(query) => match query.body.as_ref() {
-                SetExpr::Select(select) => {
-                    let column_names = self._extract_column_names(select)?;
-                    let table_with_joins = select.from.first().ok_or(system_message(
-                        "exctr",
-                        "There is no table name after FROM keyword.".to_string(),
-                    ))?;
-                    let table_name = self._extract_table_name(table_with_joins)?;
-
-                    println!(
-                        "{}",
-                        system_message(
+            Statement::Query(query) => {
+                let mut query_table_name = String::new();
+                let query_result = match query.body.as_ref() {
+                    SetExpr::Select(select) => {
+                        let column_names = self._extract_column_names(select)?;
+                        let table_with_joins = select.from.first().ok_or(system_message(
                             "exctr",
-                            format!(
-                                "Selecting {} in table {}.",
-                                column_names.join(", "),
-                                table_name
-                            ),
-                        )
-                    );
+                            "There is no table name after FROM keyword.".to_string(),
+                        ))?;
+                        let table_name = self._extract_table_name(table_with_joins)?;
+                        query_table_name = table_name.clone();
 
-                    // database.get_table()
-                    // table.reader().scan()
-                    // TODO: parse the col names and check if * or list of cols is required
-                    // from table_name
+                        println!(
+                            "{}",
+                            system_message(
+                                "exctr",
+                                format!(
+                                    "Selecting {} in table {}.",
+                                    column_names.join(", "),
+                                    table_name
+                                ),
+                            )
+                        );
 
-                    let database = self.database.read().unwrap();
-                    if let Some(table) = database.get_table(&table_name) {
-                        let table = table.read().unwrap();
-                        let table_schema_vec: Vec<String> = {
-                            let schema = table.schema.read().unwrap();
-                            schema
-                                .get_vec()
-                                .iter()
-                                .map(|(col, _)| col)
-                                .cloned()
-                                .collect()
-                        };
-                        let reader = table.reader();
+                        // database.get_table()
+                        // table.reader().scan()
+                        // TODO: parse the col names and check if * or list of cols is required
+                        // from table_name
 
-                        let mut result_table;
-                        if column_names.contains(&"*".to_string()) {
-                            result_table = table.reader();
+                        let database = self.database.read().unwrap();
+                        if let Some(table) = database.get_table(&table_name) {
+                            let table = table.read().unwrap();
+                            let table_schema_vec: Vec<String> = {
+                                let schema = table.schema.read().unwrap();
+                                schema
+                                    .get_vec()
+                                    .iter()
+                                    .map(|(col, _)| col)
+                                    .cloned()
+                                    .collect()
+                            };
+                            let reader = table.reader();
+
+                            let mut result_table;
+                            if column_names.contains(&"*".to_string()) {
+                                result_table = table.reader();
+                            } else {
+                                result_table = reader.select(column_names)?;
+                            }
+
+                            if let Some(selection) = select.selection.as_ref() {
+                                let filter = self._parse_selection(selection, &table_schema_vec)?;
+                                result_table = result_table.filter(filter).unwrap();
+                            }
+
+                            Ok(SqlResult {
+                                table: Some(result_table),
+                                n_rows_processed: Some(table._rows()),
+                            })
                         } else {
-                            result_table = reader.select(column_names)?;
+                            Err(system_message(
+                                "system",
+                                format!("Table '{}' does not exist!", &table_name),
+                            ))
                         }
-
-                        if let Some(selection) = select.selection.as_ref() {
-                            let filter = self._parse_selection(selection, &table_schema_vec)?;
-                            result_table = result_table.filter(filter).unwrap();
-                        }
-
-                        Ok(SqlResult {
-                            table: Some(result_table),
-                            n_rows_processed: Some(table._rows()),
-                        })
-                    } else {
-                        Err(system_message(
-                            "system",
-                            format!("Table '{}' does not exist!", &table_name),
-                        ))
                     }
+                    _ => Err(system_message(
+                        "exctr",
+                        "This type of query is not handled by the engine yet!".to_string(),
+                    )),
+                }?;
+
+                if let Some(order_by) = query.order_by.as_ref() {
+                    self._order_by(query_result, &query_table_name, order_by)
+                } else {
+                    Ok(query_result)
                 }
-                _ => Err(system_message(
-                    "exctr",
-                    "This type of query is not handled by the engine yet!".to_string(),
-                )),
-            },
+            }
             Statement::Insert(insert) => {
                 // check if the table exists in the database
                 // process the rows one by one to convert them to persistence api
