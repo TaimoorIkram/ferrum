@@ -24,8 +24,8 @@ use std::vec;
 
 use indexmap::IndexMap;
 use sqlparser::ast::{
-    Assignment, BinaryOperator, ColumnDef, ColumnOption, DataType, Expr, ObjectName, OrderBy,
-    Select, SelectItem, SetExpr, Statement, TableConstraint, TableFactor, TableObject,
+    Assignment, BinaryOperator, ColumnDef, ColumnOption, DataType, Expr, LimitClause, ObjectName,
+    OrderBy, Select, SelectItem, SetExpr, Statement, TableConstraint, TableFactor, TableObject,
     TableWithJoins, Value, ValueWithSpan,
 };
 
@@ -430,13 +430,21 @@ impl SqlExecutor {
 
                 println!(
                     "{}",
-                    system_message("sorter", format!("Sorting data by order: {:?}", sort_index))
+                    system_message(
+                        "sorter",
+                        format!(
+                            "Sorting data by order: {}",
+                            highlight_argument(format!("{:?}", sort_index).as_str())
+                        )
+                    )
                 );
 
                 let table_reader = query_result.table.unwrap();
+                let table_reader_rows = table_reader.rows.read().unwrap().len();
+
                 Ok(SqlResult {
                     table: Some(table_reader.order_by(sort_index)),
-                    n_rows_processed: Some(260),
+                    n_rows_processed: Some(table_reader_rows),
                 })
             }
             _ => {
@@ -446,6 +454,73 @@ impl SqlExecutor {
                 ));
             }
         }
+    }
+
+    fn _limit_offset(
+        &self,
+        query_result: SqlResult,
+        limit_clause: &LimitClause,
+    ) -> Result<SqlResult, String> {
+        //! Limit and offset the results of the query.
+        //!
+        //! Returns a new [`SqlResult`] object.
+
+        let mut row_limit: Option<usize> = None;
+        let mut row_offset: Option<usize> = None;
+
+        match limit_clause {
+            LimitClause::LimitOffset { limit, offset, .. } => {
+                if let Some(limit_expr) = limit {
+                    row_limit = Some(
+                        self._parse_expr(limit_expr)?
+                            .parse()
+                            .expect("String values not allowed as limits."),
+                    );
+                }
+
+                if let Some(offset_expr) = offset {
+                    row_offset = Some(
+                        self._parse_expr(&offset_expr.value)?
+                            .parse()
+                            .expect("String values not allowed as limits."),
+                    );
+                }
+            }
+            LimitClause::OffsetCommaLimit { offset, limit } => {
+                row_offset = Some(
+                    self._parse_expr(offset)?
+                        .parse()
+                        .expect("String values not allowed as limits."),
+                );
+
+                row_limit = Some(
+                    self._parse_expr(limit)?
+                        .parse()
+                        .expect("String values not allowed as limits."),
+                );
+            }
+        }
+
+        println!(
+            "{}",
+            system_message(
+                "limoft",
+                format!(
+                    "Selecting {} rows from row {} onwards.",
+                    highlight_argument(format!("{:?}", row_limit).as_str()),
+                    highlight_argument(format!("{:?}", row_offset).as_str())
+                )
+            )
+        );
+
+        let old_table_reader = query_result.table.unwrap();
+        let new_table_reader = old_table_reader.offset(row_offset)?.limit(row_limit)?;
+        let new_table_reader_rows = new_table_reader.rows.read().unwrap().len();
+
+        Ok(SqlResult {
+            table: Some(new_table_reader),
+            n_rows_processed: Some(new_table_reader_rows),
+        })
     }
 
     pub fn new(statement: Statement, database: &Arc<RwLock<Database>>) -> SqlExecutor {
@@ -459,7 +534,7 @@ impl SqlExecutor {
         match &self.statement {
             Statement::Query(query) => {
                 let mut query_table_name = String::new();
-                let query_result = match query.body.as_ref() {
+                let mut query_result = match query.body.as_ref() {
                     SetExpr::Select(select) => {
                         let column_names = self._extract_column_names(select)?;
                         let table_with_joins = select.from.first().ok_or(system_message(
@@ -530,10 +605,14 @@ impl SqlExecutor {
                 }?;
 
                 if let Some(order_by) = query.order_by.as_ref() {
-                    self._order_by(query_result, &query_table_name, order_by)
-                } else {
-                    Ok(query_result)
+                    query_result = self._order_by(query_result, &query_table_name, order_by)?;
                 }
+
+                if let Some(limit_clause) = query.limit_clause.as_ref() {
+                    query_result = self._limit_offset(query_result, limit_clause)?;
+                }
+
+                Ok(query_result)
             }
             Statement::Insert(insert) => {
                 // check if the table exists in the database

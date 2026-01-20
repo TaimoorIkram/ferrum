@@ -692,6 +692,51 @@ impl TableReader {
             rows: Arc::new(RwLock::new(rows)),
         };
     }
+
+    pub fn limit(self, rows: Option<usize>) -> Result<TableReader, String> {
+        //! Select only a portion of the resulting data.
+        //!
+        //! Returns the said number of rows from the table as a new
+        //! [`TableReader`] object.
+        if rows.is_none() {
+            Ok(self)
+        } else {
+            let limited_rows = {
+                let _rl = self.rows.read().unwrap();
+                let _r = _rl.get(..rows.unwrap().min(_rl.len())).unwrap();
+                _r.to_vec()
+            };
+    
+            Ok(TableReader {
+                schema: self.schema,
+                rows: Arc::new(RwLock::new(limited_rows)),
+            })
+        }
+
+    }
+
+    pub fn offset(self, rows: Option<usize>) -> Result<TableReader, String> {
+        //! Jump the first number of rows and start capturing next
+        //! rows.
+        //!
+        //! Returns a new [`TableReader`] with the remainder of
+        //! selected rows.
+
+        if rows.is_none() {
+            Ok(self)
+        } else {
+            let offsetted_rows = {
+                let _rl = self.rows.read().unwrap();
+                let _r = _rl.get(rows.unwrap().min(_rl.len())..).unwrap();
+                _r.to_vec()
+            };
+
+            Ok(TableReader {
+                schema: self.schema,
+                rows: Arc::new(RwLock::new(offsetted_rows)),
+            })
+        }
+    }
 }
 
 impl Display for TableReader {
