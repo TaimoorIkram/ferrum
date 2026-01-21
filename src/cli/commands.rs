@@ -88,6 +88,8 @@ impl SqlExecutor {
             match item {
                 SelectItem::UnnamedExpr(expr) => {
                     // SELECT col1, col2, col3, ... FROM
+                    // Could be made better using the _parse_expr after
+                    // matching identifier
 
                     if let sqlparser::ast::Expr::Identifier(ident) = expr {
                         column_names.push(ident.value.clone());
