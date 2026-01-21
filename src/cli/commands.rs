@@ -390,12 +390,7 @@ impl SqlExecutor {
         Ok((col_name, value))
     }
 
-    fn _order_by(
-        &self,
-        query_result: SqlResult,
-        query_table_name: &String,
-        order_by: &OrderBy,
-    ) -> Result<SqlResult, String> {
+    fn _order_by(&self, query_result: SqlResult, order_by: &OrderBy) -> Result<SqlResult, String> {
         //! Process filters on the resulting query and return the final result.
 
         match &order_by.kind {
@@ -412,12 +407,11 @@ impl SqlExecutor {
                         if let Some(asc) = order.options.asc {
                             let identifier = self._parse_expr(&order.expr)?;
 
-                            let database = self.database.read().unwrap();
-
-                            // get the table object ref and then derive index of that column from it
-                            let table_lock = database.get_table(&query_table_name).unwrap();
-                            let table = table_lock.write().unwrap();
-                            let schema = table.schema.read().unwrap();
+                            // get the table object ref and then derive index of that column from
+                            let schema = {
+                                let _tr = query_result.table.as_ref().unwrap();
+                                _tr.schema.read().unwrap()
+                            };
                             let col_index = schema
                                 .get_vec()
                                 .iter()
@@ -535,7 +529,6 @@ impl SqlExecutor {
     pub fn execute(&self) -> Result<SqlResult, String> {
         match &self.statement {
             Statement::Query(query) => {
-                let mut query_table_name = String::new();
                 let mut query_result = match query.body.as_ref() {
                     SetExpr::Select(select) => {
                         let column_names = self._extract_column_names(select)?;
@@ -544,7 +537,6 @@ impl SqlExecutor {
                             "There is no table name after FROM keyword.".to_string(),
                         ))?;
                         let table_name = self._extract_table_name(table_with_joins)?;
-                        query_table_name = table_name.clone();
 
                         println!(
                             "{}",
@@ -607,7 +599,7 @@ impl SqlExecutor {
                 }?;
 
                 if let Some(order_by) = query.order_by.as_ref() {
-                    query_result = self._order_by(query_result, &query_table_name, order_by)?;
+                    query_result = self._order_by(query_result, order_by)?;
                 }
 
                 if let Some(limit_clause) = query.limit_clause.as_ref() {
