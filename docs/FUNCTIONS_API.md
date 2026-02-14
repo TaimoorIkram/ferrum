@@ -51,10 +51,10 @@ The end result is a table with three columns shown to the command line user. An 
 
 To create a new aggregator function, follow these steps:
 
-1. Create a new file inside the `aggregators/` folder called `<aggregator>.rs` where the placeholder is the name of the scalar. 
-2. Add code to the file, based on the already added aggregator files and register the aggregator inside the `scalars/mod.rs`.
+1. Create a new file inside the `aggregators/` folder called `<aggregator>.rs` where the placeholder is the name of the aggregator. 
+2. Add code to the file, based on the already added aggregator files and register the aggregator inside the `aggregators/mod.rs`.
 
-> *Do not forget to set the `AGGR_NAME` as it is a crucial part to registering your scalar inside the resolver function.*
+> *Do not forget to set the `AGGR_NAME` as it is a crucial part to registering your aggregator inside the resolver function.*
 
 ---
 `A tiny little database engine project.` \
