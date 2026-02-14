@@ -27,6 +27,10 @@ The SQL query is then passed to `sqlparser-rs` which creates the syntax tree for
 
 Information regarding the current user session, such as command history and snapshots, will be kept here. Nothing is confirmed for this section yet as it will soon be implemented.
 
+## 4. The `functions` Module
+
+Provides a set of operations to customize how you see your data. The fundamental classification of functions is among two groups: `scalars` and `aggregators` depending on how they interact with the rows of the table.
+
 # Module Interconnection
 
 The `main` thread starts a `client` REPL. Input commands are passed to the `CLI Parser` to check if it is an internal command, from where it moves to the `SQL Parser` if the statement is not an internal command.
