@@ -27,7 +27,25 @@ pub struct ColumnInformation {
 }
 
 impl ColumnInformation {
+    pub fn default() -> ColumnInformation {
+        //! A generic [`ColumnInformation`] to store a reasonably bounded default string
+        //! value.
+        //! 
+        //! Use this in cases when creating custom columns inside a table reader, for example.
+
+        ColumnInformation {
+            datatype: DataType::Text,
+            max_limit: Some(256),
+            nullable: false,
+            foreign_key_constraint: None,
+        }
+    }
+
     pub fn from(datatype: DataType, max_limit: Option<usize>, nullable: bool) -> ColumnInformation {
+        //! Create a [`ColumnInformation`] object from custom information, available to the engine.
+        //! 
+        //! Use this function when creating a schema for a table, for example.
+        
         ColumnInformation {
             datatype,
             max_limit,

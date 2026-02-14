@@ -24,12 +24,13 @@ use std::vec;
 
 use indexmap::IndexMap;
 use sqlparser::ast::{
-    Assignment, BinaryOperator, ColumnDef, ColumnOption, DataType, Expr, LimitClause, ObjectName,
-    OrderBy, Select, SelectItem, SetExpr, Statement, TableConstraint, TableFactor, TableObject,
-    TableWithJoins, Value, ValueWithSpan,
+    Assignment, BinaryOperator, ColumnDef, ColumnOption, DataType, Expr, Function, LimitClause,
+    ObjectName, OrderBy, Select, SelectItem, SetExpr, Statement, TableConstraint, TableFactor,
+    TableObject, TableWithJoins, Value, ValueWithSpan,
 };
 
 use crate::cli::messages::{highlight_argument, system_message};
+use crate::functions::{aggregators, scalars};
 use crate::persistence::{Database, Row, TableReader};
 
 /// The executor class that runs the statements.
@@ -75,51 +76,367 @@ impl Display for SqlResult {
     }
 }
 
+/// A struct to represent column selection and column aggregators.
+///
+/// This class clearly distincts a simple column name from a function
+/// call with parameters.
+///
+/// # Issues
+/// - For now, there is not separate wildcard column select option. It
+/// is worked around by a * named column inside the [`SelectColumn::Column`]
+/// variant.
+pub enum SelectColumn {
+    Column {
+        name: String,
+        alias: Option<String>, // used in ExprWithAlias parsing
+    },
+    Function {
+        name: String,
+        args: Vec<FunctionArg>,
+        function_type: FunctionType,
+        alias: Option<String>, // used in ExprWithAlias parsing
+    },
+}
+
+/// A type for representing a single argument to a column
+/// aggregator function.
+///
+/// Works for cases like:
+/// - COUNT(*)       - now
+/// - COUNT(name)    - now
+/// - COUNT(age * 2) - in future
+pub enum FunctionArg {
+    Wildcard,
+    Column(String),
+}
+
+/// A type specifier for the type of [`SelectColumn::Function`].
+///
+/// It can either be a `Scalar` or an `Aggregator`.
+///
+/// A Scalar is performed on a single row at once while an Aggregator
+/// is performed on the data or group as a whole.
+///
+/// Both are NOT allowed together.
+pub enum FunctionType {
+    Scalar,
+    Aggregator,
+}
+
+enum SqlExecutorSelectMode {
+    Column,
+    Aggregate,
+}
+
+impl Display for SelectColumn {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::Column { name, alias } => {
+                let alias_name = {
+                    if alias.is_some() {
+                        format!(" as {}", alias.as_ref().unwrap().clone())
+                    } else {
+                        String::new()
+                    }
+                };
+
+                write!(f, "{}{}", name.clone(), alias_name)
+            }
+            Self::Function {
+                name, args, alias, ..
+            } => {
+                let mut arg_names = Vec::new();
+
+                for arg in args.iter() {
+                    arg_names.push(format!("{}", arg));
+                }
+
+                let alias_name = {
+                    if alias.is_some() {
+                        format!(" as {}", alias.as_ref().unwrap().clone())
+                    } else {
+                        String::new()
+                    }
+                };
+
+                write!(f, "{}({}){}", name, arg_names.join(", "), alias_name)
+            }
+        }
+    }
+}
+
+impl Display for FunctionArg {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::Column(name) => write!(f, "{}", name.clone()),
+            Self::Wildcard => write!(f, "*"),
+        }
+    }
+}
+
 /// The one and only struct for implementing the commands execution.
 ///
 /// # Issues
 /// - Executor needs to have some threading architecture, not obvious how it fits
 /// in the current, quickly changing design.
 impl SqlExecutor {
-    fn _extract_column_names(&self, select: &Select) -> Result<Vec<String>, String> {
+    fn _extract_function_argument(
+        &self,
+        arg: &sqlparser::ast::FunctionArgExpr,
+    ) -> Option<FunctionArg> {
+        //! Parse a single [`sqlparser::ast::FunctionArgExpr`] and return the argument as
+        //! a [`FunctionArg`] object.
+
+        match arg {
+            sqlparser::ast::FunctionArgExpr::Expr(expr) => {
+                let expr_string = self._parse_expr(expr);
+                Some(FunctionArg::Column(expr_string.unwrap()))
+            }
+            sqlparser::ast::FunctionArgExpr::Wildcard => Some(FunctionArg::Wildcard),
+            _ => None,
+        }
+    }
+    fn _extract_function(
+        &self,
+        func: &Function,
+        alias: Option<String>,
+    ) -> Result<SelectColumn, String> {
+        //! Parses a [`Function`] object to give a Function variant of [`SelectColumn`]
+        //! struct.
+        //!
+        //! # Issues
+        //! - Not yet recursive, so cannot handle call within a call.
+        //! - Not yet handling subqueries so cannot put a whole query into
+        //! the aggregator.
+
+        let func_name = {
+            let _fn = func.name.0.first().unwrap();
+            let _fni = _fn.as_ident().unwrap();
+            _fni.value.clone()
+        };
+
+        let func_args = match &func.args {
+            sqlparser::ast::FunctionArguments::List(list) => list
+                .args
+                .iter()
+                .filter_map(|item| match item {
+                    sqlparser::ast::FunctionArg::Unnamed(arg) => {
+                        self._extract_function_argument(arg)
+                    }
+                    _ => None,
+                })
+                .collect(),
+            _ => return Err("Invalid type of function arguments. Check your query.".to_string()),
+        };
+
+        let func_type = if aggregators::is_allowed(&func_name) {
+            FunctionType::Aggregator
+        } else if scalars::is_allowed(&func_name) {
+            FunctionType::Scalar
+        } else {
+            return Err(system_message(
+                "exctr",
+                format!(
+                    "The function {} is not an allowed aggregator or scalar.",
+                    highlight_argument(&func_name)
+                ),
+            ));
+        };
+
+        Ok(SelectColumn::Function {
+            name: func_name,
+            args: func_args,
+            function_type: func_type,
+            alias: alias,
+        })
+    }
+
+    fn _extract_column_names(
+        &self,
+        select: &Select,
+    ) -> Result<(Vec<SelectColumn>, SqlExecutorSelectMode), String> {
         let mut column_names = Vec::new();
+        let mut select_mode: Option<SqlExecutorSelectMode> = None;
 
         for item in &select.projection {
             match item {
+                SelectItem::ExprWithAlias { expr, alias } => {
+                    // TODO: SELECT col1 AS alias, ... FROM
+
+                    match expr {
+                        sqlparser::ast::Expr::Identifier(ident) => {
+                            // Insert a [`SelectColumn::Column`]
+                            let column_name = ident.value.clone();
+
+                            if let Some(mode) = &select_mode {
+                                match mode {
+                                    SqlExecutorSelectMode::Aggregate => {
+                                        return Err(system_message(
+                                            "exctr",
+                                            format!(
+                                                "Invalid {}; columns not allowed with aggregators.",
+                                                highlight_argument(&column_name)
+                                            ),
+                                        ));
+                                    }
+                                    _ => {}
+                                }
+                            };
+
+                            column_names.push(SelectColumn::Column {
+                                name: column_name,
+                                alias: Some(alias.value.clone()),
+                            });
+
+                            if select_mode.is_none() {
+                                select_mode = Some(SqlExecutorSelectMode::Column);
+                            }
+                        }
+                        sqlparser::ast::Expr::Function(func) => {
+                            // Insert a [`SelectColumn::Function`]
+                            let function =
+                                self._extract_function(func, Some(alias.value.clone()))?;
+
+                            if let Some(mode) = &select_mode {
+                                match mode {
+                                    SqlExecutorSelectMode::Column => match &function {
+                                        SelectColumn::Function {
+                                            name,
+                                            function_type,
+                                            ..
+                                        } => match function_type {
+                                            FunctionType::Aggregator => {
+                                                return Err(system_message(
+                                                    "exctr",
+                                                    format!(
+                                                        "Invalid {}; aggregators not allowed with columns.",
+                                                        highlight_argument(&name)
+                                                    ),
+                                                ));
+                                            }
+                                            _ => {}
+                                        },
+                                        _ => {}
+                                    },
+                                    _ => {}
+                                }
+                            }
+
+                            column_names.push(function);
+
+                            if select_mode.is_none() {
+                                select_mode = Some(SqlExecutorSelectMode::Aggregate);
+                            }
+                        }
+                        _ => {
+                            return Err(system_message(
+                                "exctr",
+                                format!("Invalid column identifier expression '{}'!", expr),
+                            ));
+                        }
+                    }
+                }
                 SelectItem::UnnamedExpr(expr) => {
                     // SELECT col1, col2, col3, ... FROM
+                    // SELECT COUNT(*), MAX(age), ... FROM
                     // Could be made better using the _parse_expr after
                     // matching identifier
 
-                    if let sqlparser::ast::Expr::Identifier(ident) = expr {
-                        column_names.push(ident.value.clone());
-                    } else {
-                        return Err(system_message(
-                            "exctr",
-                            format!("Invalid column identifier expression '{}'!", expr),
-                        ));
+                    match expr {
+                        sqlparser::ast::Expr::Identifier(ident) => {
+                            // Insert a [`SelectColumn::Column`]
+                            let column_name = ident.value.clone();
+
+                            if let Some(mode) = &select_mode {
+                                match mode {
+                                    SqlExecutorSelectMode::Aggregate => {
+                                        return Err(system_message(
+                                            "exctr",
+                                            format!(
+                                                "Invalid {}; columns not allowed with aggregators.",
+                                                highlight_argument(&column_name)
+                                            ),
+                                        ));
+                                    }
+                                    _ => {}
+                                }
+                            };
+
+                            column_names.push(SelectColumn::Column {
+                                name: column_name,
+                                alias: None,
+                            });
+
+                            if select_mode.is_none() {
+                                select_mode = Some(SqlExecutorSelectMode::Column);
+                            }
+                        }
+                        sqlparser::ast::Expr::Function(func) => {
+                            // Insert a [`SelectColumn::Function`]
+                            let function = self._extract_function(func, None)?;
+
+                            if let Some(mode) = &select_mode {
+                                match mode {
+                                    SqlExecutorSelectMode::Column => match &function {
+                                        SelectColumn::Function {
+                                            name,
+                                            function_type,
+                                            ..
+                                        } => match function_type {
+                                            FunctionType::Aggregator => {
+                                                return Err(system_message(
+                                                    "exctr",
+                                                    format!(
+                                                        "Invalid {}; aggregators not allowed with columns.",
+                                                        highlight_argument(&name)
+                                                    ),
+                                                ));
+                                            }
+                                            _ => {}
+                                        },
+                                        _ => {}
+                                    },
+                                    _ => {}
+                                }
+                            }
+
+                            column_names.push(function);
+
+                            if select_mode.is_none() {
+                                select_mode = Some(SqlExecutorSelectMode::Aggregate);
+                            }
+                        }
+                        _ => {
+                            return Err(system_message(
+                                "exctr",
+                                format!("Invalid column identifier expression '{}'!", expr),
+                            ));
+                        }
                     }
                 }
                 SelectItem::Wildcard(_) => {
                     // SELECT * FROM
 
-                    column_names.push("*".to_string());
+                    column_names.push(SelectColumn::Column {
+                        name: "*".to_string(),
+                        alias: None,
+                    });
                 }
                 SelectItem::QualifiedWildcard(_, _) => {
                     // SELECT table.*
 
-                    column_names.push("*".to_string());
-                }
-                _ => {
-                    return Err(system_message(
-                        "exctr",
-                        "Unable to process this SELECT statement.".to_string(),
-                    ));
+                    column_names.push(SelectColumn::Column {
+                        name: "*".to_string(),
+                        alias: None,
+                    });
                 }
             }
         }
 
-        Ok(column_names)
+        Ok((
+            column_names,
+            select_mode.unwrap_or(SqlExecutorSelectMode::Column),
+        ))
     }
 
     fn _extract_table_name(&self, table_with_joins: &TableWithJoins) -> Result<String, String> {
@@ -531,7 +848,7 @@ impl SqlExecutor {
             Statement::Query(query) => {
                 let mut query_result = match query.body.as_ref() {
                     SetExpr::Select(select) => {
-                        let column_names = self._extract_column_names(select)?;
+                        let (column_names, select_mode) = self._extract_column_names(select)?;
                         let table_with_joins = select.from.first().ok_or(system_message(
                             "exctr",
                             "There is no table name after FROM keyword.".to_string(),
@@ -544,7 +861,11 @@ impl SqlExecutor {
                                 "exctr",
                                 format!(
                                     "Selecting {} in table {}.",
-                                    column_names.join(", "),
+                                    column_names
+                                        .iter()
+                                        .map(|sel_col| format!("{}", sel_col))
+                                        .collect::<Vec<String>>()
+                                        .join(", "),
                                     table_name
                                 ),
                             )
@@ -556,6 +877,7 @@ impl SqlExecutor {
                         // from table_name
 
                         let database = self.database.read().unwrap();
+
                         if let Some(table) = database.get_table(&table_name) {
                             let table = table.read().unwrap();
                             let table_schema_vec: Vec<String> = {
@@ -567,24 +889,71 @@ impl SqlExecutor {
                                     .cloned()
                                     .collect()
                             };
-                            let reader = table.reader();
 
-                            let mut result_table;
-                            if column_names.contains(&"*".to_string()) {
-                                result_table = table.reader();
-                            } else {
-                                result_table = reader.select(column_names)?;
+                            match select_mode {
+                                SqlExecutorSelectMode::Aggregate => {
+                                    let aggregate_result =
+                                        table.perform_aggregate(&column_names)?;
+
+                                    Ok(SqlResult {
+                                        table: Some(aggregate_result),
+                                        n_rows_processed: None,
+                                    })
+                                }
+                                SqlExecutorSelectMode::Column => {
+                                    let reader = table.reader();
+                                    let mut result_table;
+
+                                    let cols: Vec<String> = column_names
+                                        .iter()
+                                        .filter_map(|col| {
+                                            if let SelectColumn::Column { name, .. } = col {
+                                                Some(name.clone())
+                                            } else {
+                                                None
+                                            }
+                                        })
+                                        .collect();
+
+                                    let sclrs: Vec<SelectColumn> = column_names
+                                        .into_iter()
+                                        .filter_map(|col| {
+                                            if matches!(col, SelectColumn::Function { .. }) {
+                                                Some(col)
+                                            } else {
+                                                None
+                                            }
+                                        })
+                                        .collect();
+
+                                    // This check could be made better with:
+                                    // - A vec based wrapper
+                                    // - A wildcard check method or enum variant
+                                    if cols.contains(&"*".to_string()) {
+                                        result_table = table.reader();
+                                    } else {
+                                        // TODO: Update this call to include alias, so reader can display readable
+                                        // column names.
+                                        result_table = reader.select(cols)?;
+                                    }
+
+                                    if let Some(selection) = select.selection.as_ref() {
+                                        let filter =
+                                            self._parse_selection(selection, &table_schema_vec)?;
+                                        result_table = result_table.filter(filter).unwrap();
+                                    }
+
+                                    if sclrs.len() > 0 {
+                                        println!("Performing {} scalars", sclrs.len());
+                                        result_table = result_table.perform_function(&sclrs)?;
+                                    }
+
+                                    Ok(SqlResult {
+                                        table: Some(result_table),
+                                        n_rows_processed: Some(table._rows()),
+                                    })
+                                }
                             }
-
-                            if let Some(selection) = select.selection.as_ref() {
-                                let filter = self._parse_selection(selection, &table_schema_vec)?;
-                                result_table = result_table.filter(filter).unwrap();
-                            }
-
-                            Ok(SqlResult {
-                                table: Some(result_table),
-                                n_rows_processed: Some(table._rows()),
-                            })
                         } else {
                             Err(system_message(
                                 "system",

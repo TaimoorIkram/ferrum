@@ -19,8 +19,11 @@ use crate::{
 mod colors;
 mod commands;
 mod messages;
-pub mod parsers;
 mod splash_screen;
+pub mod parsers;
+
+pub use commands::FunctionArg;
+pub use commands::SelectColumn;
 
 pub fn run_client() {
     splash_screen::splash_screen();
@@ -102,7 +105,7 @@ fn start_repl() {
                                         "ferrum",
                                         format!(
                                             "{} row(s) processed!",
-                                            result.n_rows_processed.unwrap()
+                                            result.n_rows_processed.unwrap_or(0)
                                         )
                                     )
                                 );

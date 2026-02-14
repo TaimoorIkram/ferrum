@@ -1,5 +1,8 @@
 use log::warn;
 
+use crate::cli::{FunctionArg, SelectColumn};
+use crate::functions::{aggregators, scalars};
+
 use super::index::{ForeignKeyConstraint, Index, Key};
 use super::row::Row;
 use super::schema::{ColumnInformation, DataType, Schema};
@@ -569,6 +572,71 @@ impl Table {
         let mut schema = self.schema.write().unwrap();
         schema.update_foreign_key_index(schema_index, key_index);
     }
+
+    pub fn perform_aggregate(&self, func_vec: &Vec<SelectColumn>) -> Result<TableReader, String> {
+        //! Perform all aggregate functions, create a single row [`TableReader`]
+        //! for showing results.
+        //!
+        //! Note that this only returns one row and therefore it is inside the
+        //! Table module itself. For functions that are performed on a single row
+        //! and appended, see [`TableReader::perform_function`].
+        //!
+        //! # Intended Flow
+        //!
+        //! The function takes in the entire list of aggregates i.e. [`Vec<SelectColumn>`] and
+        //! then iterates over each to perform the function. During the performing of the
+        //! aggregator, it should pass a read only handle of itself, or the rows, and the
+        //! schema.
+
+        let mut result = TableReader::new();
+
+        let rows = {
+            let _rl = self.rows.read().unwrap();
+            let _r = _rl.clone();
+            _r
+        };
+
+        for aggr in func_vec.iter() {
+            if let SelectColumn::Function {
+                name, args, alias, ..
+            } = aggr
+            {
+                let mut aggr_args = vec![];
+
+                for arg in args.iter() {
+                    match arg {
+                        FunctionArg::Wildcard => {
+                            // Process the command for all columns, no distinction
+                            aggr_args.push("*".to_string());
+                        }
+                        FunctionArg::Column(column) => {
+                            // Process the command for a set of columns
+                            let col_index = {
+                                let _s = self.schema.read().unwrap();
+                                _s.get_vec()
+                                    .iter()
+                                    .position(|(col_name, _)| col_name == column)
+                            }
+                            .unwrap();
+
+                            aggr_args.push(col_index.to_string());
+                        }
+                    }
+                }
+
+                let aggr_value = aggregators::run(name, &aggr_args, &rows)?;
+                result = result.add_column(
+                    (
+                        alias.clone().unwrap_or(name.clone()),
+                        ColumnInformation::default(),
+                    ),
+                    aggr_value,
+                );
+            }
+        }
+
+        Ok(result)
+    }
 }
 
 impl Display for Table {
@@ -591,6 +659,73 @@ impl Display for Table {
 }
 
 impl TableReader {
+    pub fn new() -> TableReader {
+        let schema = RwLock::new(Schema::new(Vec::new()));
+        let rows = RwLock::new(Vec::<Row>::new());
+
+        TableReader {
+            schema: Arc::new(schema),
+            rows: Arc::new(rows),
+        }
+    }
+
+    pub fn add_column(
+        self,
+        (col_name, col_info): (String, ColumnInformation),
+        value: String,
+    ) -> TableReader {
+        //! Used by the aggregator to add a column to its temporary table.
+
+        let mut schema = self.schema.write().unwrap();
+        let mut rows = self.rows.write().unwrap();
+
+        println!("Adding {} to result row.", value);
+
+        schema.get_vec_mut().push((col_name, col_info));
+
+        if rows.len() == 0 {
+            rows.push(Row(vec![]));
+        }
+
+        for row in rows.iter_mut() {
+            row.0.push(Some(value.clone()));
+        }
+
+        TableReader {
+            schema: self.schema.clone(),
+            rows: self.rows.clone(),
+        }
+    }
+
+    pub fn add_column_scalar(
+        self,
+        (col_name, col_info): (String, ColumnInformation),
+        scalar: fn(&Vec<String>, &Row) -> Result<String, String>,
+        args: &Vec<String>,
+    ) -> TableReader {
+        //! Used by the scalar to add a column to its temporary table.
+        //!
+        //! Takes a pointer to the scalar function and applies it over all
+        //! rows.
+
+        // TODO: FIX THIS. FIND A WAY TO RUN FUNCTIONS AND OBTAIN VALUES TO ADD.
+
+        let mut schema = self.schema.write().unwrap();
+        let mut rows = self.rows.write().unwrap();
+
+        schema.get_vec_mut().push((col_name, col_info));
+
+        for row in rows.iter_mut() {
+            let value = scalar(args, row);
+            row.0.push(Some(value.unwrap()));
+        }
+
+        TableReader {
+            schema: self.schema.clone(),
+            rows: self.rows.clone(),
+        }
+    }
+
     pub fn scan(&self) -> Vec<Row> {
         //! Returns a copy of all the rows of the table, so the read is not locked anymore.
 
@@ -635,6 +770,7 @@ impl TableReader {
             })
             .collect();
 
+        // TODO: Include alias into the schema, replace the original name, if possible.
         let new_schema: Schema = Schema::new(
             indices
                 .iter()
@@ -706,13 +842,12 @@ impl TableReader {
                 let _r = _rl.get(..rows.unwrap().min(_rl.len())).unwrap();
                 _r.to_vec()
             };
-    
+
             Ok(TableReader {
                 schema: self.schema,
                 rows: Arc::new(RwLock::new(limited_rows)),
             })
         }
-
     }
 
     pub fn offset(self, rows: Option<usize>) -> Result<TableReader, String> {
@@ -736,6 +871,69 @@ impl TableReader {
                 rows: Arc::new(RwLock::new(offsetted_rows)),
             })
         }
+    }
+
+    pub fn perform_function(self, func_vec: &Vec<SelectColumn>) -> Result<TableReader, String> {
+        //! ~Takes the `name` for the column name, an `alias` for custom display names, if specified
+        //! and the `args` which are either column names or a wildcard.~
+        //!
+        //! Takes the list of all functions to apply, then applies them one after the other.
+        //!
+        //! Performs function on a particular argument column of the table and appends returns the
+        //! rows with data appended.
+
+        let schema = self.schema.clone();
+        let mut result = self;
+
+        for sclr in func_vec.iter() {
+            if let SelectColumn::Function {
+                name, args, alias, ..
+            } = sclr
+            {
+                let mut sclr_args = vec![];
+
+                for (index, arg) in args.iter().enumerate() {
+                    match arg {
+                        FunctionArg::Wildcard => {
+                            // Process the command for all columns, no distinction
+                            return Err(format!(
+                                "Invalid {}; wildcard not allowed inside scalars.",
+                                name
+                            ));
+                        }
+                        FunctionArg::Column(column) => {
+                            // Process the command for a set of columns
+                            if index == 0 {
+                                let col_index = {
+                                    let _s = schema.read().unwrap();
+                                    _s.get_vec()
+                                        .iter()
+                                        .position(|(col_name, _)| col_name == column)
+                                }
+                                .ok_or_else(|| {
+                                    format!("Column {} does not exist. Select it first.", &column)
+                                })?;
+
+                                sclr_args.push(col_index.to_string());
+                            } else {
+                                sclr_args.push(column.clone());
+                            }
+                        }
+                    }
+                }
+
+                result = result.add_column_scalar(
+                    (
+                        alias.clone().unwrap_or(name.clone()),
+                        ColumnInformation::default(),
+                    ),
+                    scalars::get_runner(name).unwrap(),
+                    &sclr_args,
+                );
+            }
+        }
+
+        Ok(result)
     }
 }
 
