@@ -1,6 +1,6 @@
 //! To maintain a theme of colors, I will add colors here as constants so
 //! the UI does not look bad at any point.
-//! 
+//!
 //! - FERRUM_RED: Main Color
 
 use colored::Color;

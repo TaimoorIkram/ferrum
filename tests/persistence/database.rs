@@ -1,6 +1,4 @@
-use std::{
-    sync::{Arc, RwLock},
-};
+use std::sync::{Arc, RwLock};
 
 use ferrum_engine::persistence::{Database, Row, Table};
 

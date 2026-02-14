@@ -2,7 +2,7 @@ use crate::persistence::Row;
 
 mod add;
 
-const ALLOWED_SCALARS: [&str; 1] = [add::SCLR_NAME]; 
+const ALLOWED_SCALARS: [&str; 1] = [add::SCLR_NAME];
 
 /// A central method that works as a registry for all scalars.
 ///
