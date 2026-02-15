@@ -669,6 +669,10 @@ impl TableReader {
         }
     }
 
+    pub fn count_rows(&self) -> usize {
+        self.rows.read().unwrap().len()
+    }
+
     pub fn add_column(
         self,
         (col_name, col_info): (String, ColumnInformation),

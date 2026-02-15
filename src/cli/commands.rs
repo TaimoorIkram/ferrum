@@ -753,7 +753,7 @@ impl SqlExecutor {
                 );
 
                 let table_reader = query_result.table.unwrap();
-                let table_reader_rows = table_reader.rows.read().unwrap().len();
+                let table_reader_rows = table_reader.count_rows();
 
                 Ok(SqlResult {
                     table: Some(table_reader.order_by(sort_index)),
@@ -828,7 +828,7 @@ impl SqlExecutor {
 
         let old_table_reader = query_result.table.unwrap();
         let new_table_reader = old_table_reader.offset(row_offset)?.limit(row_limit)?;
-        let new_table_reader_rows = new_table_reader.rows.read().unwrap().len();
+        let new_table_reader_rows = new_table_reader.count_rows();
 
         Ok(SqlResult {
             table: Some(new_table_reader),

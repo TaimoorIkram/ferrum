@@ -29,10 +29,7 @@ pub use commands::SelectColumn;
 const DEFAULT_LAST_COMMAND_DELIMITER: &str = "!";
 
 const FERRUM_ENGINE_COMMANDS_LIST: [(&str, &str); 4] = [
-    (
-        "!",
-        "execute the last command, add more to go further back",
-    ),
+    ("!", "execute the last command, add more to go further back"),
     ("help", "list all available commands"),
     ("history", "list command history for this session"),
     (
