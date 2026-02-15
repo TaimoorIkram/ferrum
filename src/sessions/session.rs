@@ -27,17 +27,99 @@
 //! user data.
 
 use std::{
+    fmt::Display,
     sync::{Arc, RwLock},
     time::SystemTime,
 };
 
+use chrono::{DateTime, Local};
+
 use crate::persistence::Database;
 
-pub enum Session {
-    ClientSession {
-        command_history: Vec<String>,
-        start_time: SystemTime,
-        active_database: Arc<RwLock<Database>>,
-    },
-    ServerSession,
+struct CommandHistory {
+    command: String,
+    command_time: SystemTime,
+}
+
+impl CommandHistory {
+    pub fn command_time_string(&self) -> String {
+        let datetime: DateTime<Local> = self.command_time.into();
+        datetime.format("%Y-%m-%d %H:%M:%S").to_string()
+    }
+}
+
+impl Display for CommandHistory {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "{} - {}", self.command_time_string(), self.command)
+    }
+}
+
+pub struct Session {
+    command_history: Vec<CommandHistory>,
+    start_time: SystemTime,
+    active_database: Option<Arc<RwLock<Database>>>,
+}
+
+impl Session {
+    pub fn client() -> Session {
+        //! Returns a new client session.
+
+        Session {
+            command_history: vec![],
+            start_time: SystemTime::now(),
+            active_database: None,
+        }
+    }
+
+    pub fn use_database(&mut self, db: &Arc<RwLock<Database>>) {
+        //! Set the currently active database connection for future
+        //! querying.
+
+        self.active_database = Some(Arc::clone(db))
+    }
+
+    pub fn get_active_database(&self) -> Option<Arc<RwLock<Database>>> {
+        //! Get a reference to the currently active database connection,
+        //! otherwise return [`None`]
+
+        self.active_database.as_ref().map(Arc::clone)
+    }
+
+    pub fn add_to_command_history(&mut self, command: &str) {
+        self.command_history.push(CommandHistory {
+            command: command.to_string(),
+            command_time: SystemTime::now(),
+        });
+    }
+
+    pub fn start_time_string(&self) -> String {
+        //! Conver the [`SystemTime`] object into a string representation
+        //! to be more readable.
+
+        let datetime: DateTime<Local> = self.start_time.into();
+        datetime.format("%Y-%m-%d %H:%M:%S").to_string()
+    }
+
+    pub fn show_command_history(&self, n_prev: Option<usize>) {
+        //! Show the list of previously invoked comamnds.
+        //! Use `n_prev` to limit the number of commands you see.
+
+        let limit = n_prev.unwrap_or(self.command_history.len());
+
+        for (index, command) in self.command_history.iter().rev().enumerate() {
+            if index < limit {
+                println!("{:3} | {}", index, command);
+            }
+        }
+    }
+
+    pub fn get_last_command(&self, nth_back: usize) -> Option<&str> {
+        //! Gets the [`recent`]th last command from the history
+        //! and runs it.
+
+        self.command_history
+            .iter()
+            .nth_back(nth_back - 1)
+            .map(|cmd| cmd.command.as_str())
+    }
 }
