@@ -3,6 +3,8 @@ use std::{
     sync::{Arc, RwLock},
 };
 
+use indexmap::IndexMap;
+
 use crate::persistence::{Row, index::ForeignKeyConstraint};
 
 use super::table::Table;
@@ -32,6 +34,21 @@ use super::table::Table;
 pub struct Database {
     name: String,
     tables: HashMap<String, Arc<RwLock<Table>>>,
+}
+
+/// A single place to store all databases.
+///
+/// A [`DatabaseRegistry`] controls and provides connections to sessions to mutate the database
+/// and provides utilities to check if the databse exists in the registry already or not.
+///
+/// Simply, it is also based on an [`IndexMap`] registry pattern. The order prevails and keys
+/// will always appear in the same order.
+///
+/// An [`Arc<RwLock<Database>>`] keeps things simple to deal with, when providing sessions with
+/// handles to these databases. Using a simple Database asks for trait derivation cascades down
+/// to the [`Row`] which is much more effort than needed for a simple registry like this.
+pub struct DatabaseRegistry {
+    registry: IndexMap<String, Arc<RwLock<Database>>>,
 }
 
 impl Database {
@@ -343,5 +360,75 @@ impl Database {
 
     pub fn contains_table(&self, table_name: &str) -> bool {
         self.tables.contains_key(table_name)
+    }
+}
+
+impl DatabaseRegistry {
+    pub fn new() -> DatabaseRegistry {
+        DatabaseRegistry {
+            registry: IndexMap::new(),
+        }
+    }
+
+    pub fn exists(&self, db_name: &str) -> bool {
+        //! Check if a database already exists in the registry.
+
+        self.registry.contains_key(db_name)
+    }
+
+    pub fn create_database(
+        &mut self,
+        db_name: &str,
+        if_not_exists: bool,
+    ) -> Result<Arc<RwLock<Database>>, String> {
+        //! Create a new database if it does not already exist.
+        //!
+        //! Throws an exception if a database with the same name already exists.
+
+        let db = Arc::new(RwLock::new(Database::new(db_name.to_string())));
+
+        if self.registry.contains_key(db_name) {
+            if if_not_exists {
+                self.get_database(db_name)
+            } else {
+                Err(format!(
+                    "Integrity violation; database {} already exists",
+                    db_name
+                ))
+            }
+        } else {
+            self.registry.insert(db_name.to_string(), db);
+            let created_db = self
+                .registry
+                .get(db_name)
+                .expect("Failed to create database.");
+
+            Ok(Arc::clone(&created_db))
+        }
+    }
+
+    pub fn get_database(&self, db_name: &str) -> Result<Arc<RwLock<Database>>, String> {
+        let db = self
+            .registry
+            .get(db_name)
+            .expect(format!("Database {} does not exist.", db_name).as_str());
+        Ok(Arc::clone(db))
+    }
+
+    pub fn get_database_names(&self) -> Vec<String> {
+        //! Get a list of all available databases in the registry.
+
+        self.registry.keys().cloned().collect()
+    }
+
+    pub fn drop_database(&mut self, db_name: &str) -> Option<Arc<RwLock<Database>>> {
+        //! Delete an existing database
+        //! 
+        //! The registry will FORCE a delete regardless of whether there are foreign key connections
+        //! or not.
+        //! 
+        //! It will also ignore any RESTRICT in the command lines if such a statement is run.
+        
+        self.registry.shift_remove(db_name)
     }
 }

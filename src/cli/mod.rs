@@ -13,7 +13,7 @@ use crate::{
         messages::{highlight_argument, system_message},
         parsers::SqlParser,
     },
-    persistence::Database,
+    persistence::DatabaseRegistry,
     sessions::session::Session,
 };
 
@@ -41,7 +41,16 @@ const FERRUM_ENGINE_COMMANDS_LIST: [(&str, &str); 4] = [
 pub fn run_client() {
     splash_screen::splash_screen();
 
-    let session = Session::client();
+    let registry = Arc::new(RwLock::new(DatabaseRegistry::new()));
+    let session = Arc::new(RwLock::new(Session::client(&registry)));
+
+    println!(
+        "{}",
+        system_message(
+            "info",
+            format!("A default database registry was created at the session level.")
+        )
+    );
 
     start_repl(session);
 }
@@ -69,7 +78,7 @@ pub fn show_help() {
     }
 }
 
-fn start_repl(mut session: Session) {
+fn start_repl(client_session: Arc<RwLock<Session>>) {
     println!(
         "{}",
         system_message(
@@ -82,35 +91,20 @@ fn start_repl(mut session: Session) {
         )
     );
 
-    let tmp_db = Arc::new(RwLock::new(Database::new("cli_user_database".to_string())));
-    session.use_database(&tmp_db);
-
-    let session_start_time = session.start_time_string();
-    println!(
-        "{}",
-        system_message(
-            "system",
-            format!(
-                "New session initiated at '{}'.",
-                highlight_argument(&session_start_time)
-            ),
-        )
-    );
-
-    let database = session
-        .get_active_database()
-        .expect("Connection referred before it was assigned.");
-
-    println!(
-        "{}",
-        system_message(
-            "system",
-            format!(
-                "A new database '{}' was automatically created for the duration of this session.",
-                highlight_argument("cli_user_database"),
+    {
+        let session = client_session.read().unwrap();
+        let session_start_time = session.start_time_string();
+        println!(
+            "{}",
+            system_message(
+                "system",
+                format!(
+                    "New session initiated at '{}'.",
+                    highlight_argument(&session_start_time)
+                ),
             )
-        )
-    );
+        );
+    }
 
     loop {
         let mut query_result: Option<SqlResult> = None;
@@ -123,6 +117,7 @@ fn start_repl(mut session: Session) {
         io::stdin().read_line(&mut buffer).unwrap();
 
         if buffer.starts_with(DEFAULT_LAST_COMMAND_DELIMITER) {
+            let session = client_session.read().unwrap();
             let last = buffer.matches(DEFAULT_LAST_COMMAND_DELIMITER).count();
             let last_command = session.get_last_command(last);
 
@@ -143,10 +138,16 @@ fn start_repl(mut session: Session) {
             }
         }
 
-        session.add_to_command_history(buffer.clone().trim());
+        {
+            let mut session = client_session.write().unwrap();
+            session.add_to_command_history(buffer.clone().trim());
+        }
 
         match buffer.trim() {
-            "history" => session.show_command_history(None),
+            "history" => {
+                let session = client_session.read().unwrap();
+                session.show_command_history(None);
+            }
             "help" => show_help(),
             "exit" => println!("did you mean '{}'?", "corrode".color(FERRUM_RED)),
             "corrode" => break,
@@ -164,7 +165,7 @@ fn start_repl(mut session: Session) {
                             )
                         );
 
-                        let executor = SqlExecutor::new(statement, &database);
+                        let executor = SqlExecutor::new(statement, &client_session);
                         match executor.execute() {
                             Ok(result) => {
                                 println!(

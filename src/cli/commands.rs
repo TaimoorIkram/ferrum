@@ -26,12 +26,13 @@ use indexmap::IndexMap;
 use sqlparser::ast::{
     Assignment, BinaryOperator, ColumnDef, ColumnOption, DataType, Expr, Function, LimitClause,
     ObjectName, OrderBy, Select, SelectItem, SetExpr, Statement, TableConstraint, TableFactor,
-    TableObject, TableWithJoins, Value, ValueWithSpan,
+    TableObject, TableWithJoins, Use, Value, ValueWithSpan,
 };
 
 use crate::cli::messages::{highlight_argument, system_message};
 use crate::functions::{aggregators, scalars};
 use crate::persistence::{Database, Row, TableReader};
+use crate::sessions::session::Session;
 
 /// The executor class that runs the statements.
 ///
@@ -52,7 +53,7 @@ use crate::persistence::{Database, Row, TableReader};
 /// in focus but for now, a ref to a mutable database will be sufficient.
 pub struct SqlExecutor {
     statement: Statement,
-    database: Arc<RwLock<Database>>,
+    session: Arc<RwLock<Session>>,
 }
 
 /// After a query runs and completes its execution, the result of the query
@@ -836,14 +837,43 @@ impl SqlExecutor {
         })
     }
 
-    pub fn new(statement: Statement, database: &Arc<RwLock<Database>>) -> SqlExecutor {
+    fn _get_db_from_session(&self) -> Result<Arc<RwLock<Database>>, String> {
+        let session = self.session.read().unwrap();
+
+        if let Some(database) = session.get_active_database() {
+            Ok(database)
+        } else {
+            return Err(format!("no database currently selected."));
+        }
+    }
+
+    fn _parse_object_name(&self, obj_name: &ObjectName) -> String {
+        //! Parse the annoying name object and obtain its string value.
+
+        obj_name
+            .0
+            .first()
+            .unwrap()
+            .as_ident()
+            .take()
+            .unwrap()
+            .value
+            .clone()
+    }
+
+    pub fn new(statement: Statement, session: &Arc<RwLock<Session>>) -> SqlExecutor {
         SqlExecutor {
             statement,
-            database: Arc::clone(database),
+            session: Arc::clone(session),
         }
     }
 
     pub fn execute(&self) -> Result<SqlResult, String> {
+        //! Run the assigned command and display results if any are to be displayed.
+        //!
+        //! Currently, an arc has to be acquired first, in every branch, and then the
+        //! database is read or modified.
+
         match &self.statement {
             Statement::Query(query) => {
                 let mut query_result = match query.body.as_ref() {
@@ -876,7 +906,8 @@ impl SqlExecutor {
                         // TODO: parse the col names and check if * or list of cols is required
                         // from table_name
 
-                        let database = self.database.read().unwrap();
+                        let db_arc = self._get_db_from_session()?;
+                        let database = db_arc.read().unwrap();
 
                         if let Some(table) = database.get_table(&table_name) {
                             let table = table.read().unwrap();
@@ -988,7 +1019,8 @@ impl SqlExecutor {
                     _ => return Err("Invalid table name. Please check your query.".to_string()),
                 };
 
-                let mut database = self.database.write().unwrap();
+                let db_arc = self._get_db_from_session()?;
+                let mut database = db_arc.write().unwrap();
                 if database.contains_table(&table_name) {
                     let query_body = insert.source.clone().expect(&system_message(
                         "system",
@@ -1024,7 +1056,8 @@ impl SqlExecutor {
                 }
             }
             Statement::ShowTables { .. } => {
-                let database = self.database.read().unwrap();
+                let db_arc = self._get_db_from_session()?;
+                let database = db_arc.read().unwrap();
                 let table_names = database.get_table_names();
 
                 if table_names.is_empty() {
@@ -1079,7 +1112,8 @@ impl SqlExecutor {
                     prev_constraint.extend(column_constraint);
                 }
 
-                let mut database = self.database.write().unwrap();
+                let db_arc = self._get_db_from_session()?;
+                let mut database = db_arc.write().unwrap();
                 let column_definitions = col_def_map
                     .values()
                     .into_iter()
@@ -1105,7 +1139,8 @@ impl SqlExecutor {
                     _ => return Err("Invalid DELETE statement.".to_string()),
                 };
 
-                let mut database = self.database.write().unwrap();
+                let db_arc = self._get_db_from_session()?;
+                let mut database = db_arc.write().unwrap();
                 if database.contains_table(&table_name) {
                     // CAUTION: LOCK HOLD PROBLEM
                     // The following expression solves an issue of infinite read locking
@@ -1143,7 +1178,8 @@ impl SqlExecutor {
                 let table_with_joins = &update.table;
                 let table_name = self._extract_table_name(table_with_joins)?;
 
-                let mut database = self.database.write().unwrap();
+                let db_arc = self._get_db_from_session()?;
+                let mut database = db_arc.write().unwrap();
 
                 if database.contains_table(&table_name) {
                     // CAUTION: LOCK HOLD PROBLEM
@@ -1183,6 +1219,119 @@ impl SqlExecutor {
                         "system",
                         format!("Table {} does not exist!", highlight_argument(&table_name)),
                     ))
+                }
+            }
+            Statement::CreateDatabase {
+                db_name,
+                if_not_exists,
+                ..
+            } => {
+                let database_name = self._parse_object_name(&db_name);
+
+                let mut session = self.session.write().unwrap();
+                session.create_database(&database_name, *if_not_exists)?;
+
+                Ok(SqlResult {
+                    table: None,
+                    n_rows_processed: Some(0),
+                })
+            }
+            Statement::Use(use_stmt) => {
+                let db_name = match use_stmt {
+                    Use::Object(db) => self._parse_object_name(db),
+                    _ => {
+                        return Err(system_message(
+                            "system",
+                            format!(
+                                "No other case than {} is handled yet.",
+                                highlight_argument("USE <db_name>")
+                            ),
+                        ));
+                    }
+                };
+
+                let mut session = self.session.write().unwrap();
+                session.use_database(&db_name)?;
+
+                Ok(SqlResult {
+                    table: None,
+                    n_rows_processed: Some(0),
+                })
+            }
+            Statement::ShowDatabases { .. } => {
+                // Display all databases but does NOT deal with compliated SQL features like
+                // TERSE, HISTORY, LIMIT, STARTS WITH etc...
+                let session = self.session.read().unwrap();
+                let database_names = session.get_available_databases();
+
+                if database_names.is_empty() {
+                    println!("There are no databases in the registry yet.");
+                } else {
+                    println!(
+                        "There are {} databases in the registry.",
+                        database_names.len()
+                    );
+                    for (index, table_name) in database_names.iter().enumerate() {
+                        println!("{:5}. {:10}", index + 1, table_name);
+                    }
+                }
+
+                Ok(SqlResult {
+                    table: None,
+                    n_rows_processed: Some(0),
+                })
+            }
+            Statement::Drop {
+                object_type,
+                if_exists,
+                names,
+                ..
+            } => {
+                // Handles simple drop, and ignores complicated SQL features like
+                // CASCADE and RESTRICT
+                // CASCADE by defauly and there is no other option
+
+                match object_type {
+                    sqlparser::ast::ObjectType::Database => {
+                        let database = names.first().unwrap();
+                        let db_name = self._parse_object_name(database);
+
+                        let mut session = self.session.write().unwrap();
+
+                        if let None = session.drop_database(&db_name) {
+                            if !*if_exists {
+                                return Err(system_message(
+                                    "system",
+                                    format!(
+                                        "No other case than {} is handled yet.",
+                                        highlight_argument("USE <db_name>")
+                                    ),
+                                ));
+                            }
+                        }
+
+                        Ok(SqlResult {
+                            table: None,
+                            n_rows_processed: Some(0),
+                        })
+                    }
+                    sqlparser::ast::ObjectType::Table => {
+                        // Removes the table from the registry.
+
+                        return Err(system_message(
+                            "system",
+                            format!("This feature will be implemented soon."),
+                        ));
+                    }
+                    _ => {
+                        return Err(system_message(
+                            "system",
+                            format!(
+                                "No other case than {} is handled yet.",
+                                highlight_argument("DROP DATABASE <db_name>")
+                            ),
+                        ));
+                    }
                 }
             }
             _ => Err(system_message(

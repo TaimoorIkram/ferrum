@@ -12,6 +12,6 @@ mod schema;
 mod index;
 
 //  External API
-pub use database::Database;
+pub use database::{Database, DatabaseRegistry};
 pub use table::{Table, TableReader};
 pub use row::Row;

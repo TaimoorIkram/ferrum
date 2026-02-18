@@ -34,7 +34,7 @@ use std::{
 
 use chrono::{DateTime, Local};
 
-use crate::persistence::Database;
+use crate::persistence::{Database, DatabaseRegistry};
 
 struct CommandHistory {
     command: String,
@@ -58,24 +58,29 @@ pub struct Session {
     command_history: Vec<CommandHistory>,
     start_time: SystemTime,
     active_database: Option<Arc<RwLock<Database>>>,
+    database_registry: Arc<RwLock<DatabaseRegistry>>,
 }
 
 impl Session {
-    pub fn client() -> Session {
+    pub fn client(db_reg: &Arc<RwLock<DatabaseRegistry>>) -> Session {
         //! Returns a new client session.
 
         Session {
             command_history: vec![],
             start_time: SystemTime::now(),
             active_database: None,
+            database_registry: Arc::clone(db_reg),
         }
     }
 
-    pub fn use_database(&mut self, db: &Arc<RwLock<Database>>) {
+    pub fn use_database(&mut self, db_name: &str) -> Result<(), String> {
         //! Set the currently active database connection for future
         //! querying.
 
-        self.active_database = Some(Arc::clone(db))
+        let db_reg = self.database_registry.read().unwrap();
+        let db = db_reg.get_database(db_name)?;
+        self.active_database = Some(db);
+        Ok(())
     }
 
     pub fn get_active_database(&self) -> Option<Arc<RwLock<Database>>> {
@@ -121,5 +126,28 @@ impl Session {
             .iter()
             .nth_back(nth_back - 1)
             .map(|cmd| cmd.command.as_str())
+    }
+
+    pub fn create_database(
+        &mut self,
+        db_name: &str,
+        if_not_exists: bool,
+    ) -> Result<Arc<RwLock<Database>>, String> {
+        let mut db_reg = self.database_registry.write().unwrap();
+        db_reg.create_database(db_name, if_not_exists)
+    }
+
+    pub fn get_available_databases(&self) -> Vec<String> {
+        //! Returns a list of all available database names.
+        
+        let db_reg = self.database_registry.read().unwrap();
+        db_reg.get_database_names()
+    }
+
+    pub fn drop_database(&mut self, db_name: &str) -> Option<Arc<RwLock<Database>>> {
+        //! Deletes the existing registry value of the registry.
+        
+        let mut db_reg = self.database_registry.write().unwrap();
+        db_reg.drop_database(db_name)
     }
 }
