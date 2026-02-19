@@ -139,15 +139,21 @@ impl Session {
 
     pub fn get_available_databases(&self) -> Vec<String> {
         //! Returns a list of all available database names.
-        
+
         let db_reg = self.database_registry.read().unwrap();
         db_reg.get_database_names()
     }
 
-    pub fn drop_database(&mut self, db_name: &str) -> Option<Arc<RwLock<Database>>> {
+    pub fn drop_database(&mut self, db_name: &str) -> Result<Option<Arc<RwLock<Database>>>, String> {
         //! Deletes the existing registry value of the registry.
-        
+
+        if let Some(db) = self.active_database.as_ref() {
+            if db.read().unwrap().name() == db_name {
+                return Err(format!("database is currently in use"));
+            }
+        }
+
         let mut db_reg = self.database_registry.write().unwrap();
-        db_reg.drop_database(db_name)
+        Ok(db_reg.drop_database(db_name))
     }
 }

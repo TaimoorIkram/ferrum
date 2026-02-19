@@ -1298,7 +1298,7 @@ impl SqlExecutor {
 
                         let mut session = self.session.write().unwrap();
 
-                        if let None = session.drop_database(&db_name) {
+                        if let None = session.drop_database(&db_name)? {
                             if !*if_exists {
                                 return Err(system_message(
                                     "system",
@@ -1318,10 +1318,19 @@ impl SqlExecutor {
                     sqlparser::ast::ObjectType::Table => {
                         // Removes the table from the registry.
 
-                        return Err(system_message(
-                            "system",
-                            format!("This feature will be implemented soon."),
-                        ));
+                        let db_arc = self._get_db_from_session()?;
+                        let mut database = db_arc.write().unwrap();
+                        let mut dropped_row_count = 0;
+
+                        for name_obj in names.iter() {
+                            let name = self._parse_object_name(name_obj);
+                            dropped_row_count += database.drop_table(&name)?;
+                        }
+
+                        Ok(SqlResult {
+                            table: None,
+                            n_rows_processed: Some(dropped_row_count),
+                        })
                     }
                     _ => {
                         return Err(system_message(
@@ -1333,6 +1342,23 @@ impl SqlExecutor {
                         ));
                     }
                 }
+            }
+            Statement::Truncate(truncate) => {
+                // Removes all rows of a table regardless of foreign key checks.
+                // Does not handle features like CASCADE, IDENTITY, ON CLUSTER etc.
+                let db_arc = self._get_db_from_session()?;
+                let mut database = db_arc.write().unwrap();
+                let mut truncated_row_count = 0;
+
+                for table_name_obj in truncate.table_names.iter() {
+                    let table_name = self._parse_object_name(&table_name_obj.name);
+                    truncated_row_count += database.truncate_table(&table_name)?;
+                }
+
+                Ok(SqlResult {
+                    table: None,
+                    n_rows_processed: Some(truncated_row_count),
+                })
             }
             _ => Err(system_message(
                 "exctr",

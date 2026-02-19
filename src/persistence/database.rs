@@ -361,6 +361,48 @@ impl Database {
     pub fn contains_table(&self, table_name: &str) -> bool {
         self.tables.contains_key(table_name)
     }
+
+    pub fn truncate_table(&mut self, table_name: &str) -> Result<usize, String> {
+        //! Remove all rows of a table, making it empty again.
+        //!
+        //! Note: If there is a foreign key relationship, it will also be removed,
+        //! meaning that the row where it was being reference will become stale.
+        //!
+        //! This will however suffice for a simple implementation until a better way
+        //! of managing key relations is established such as maybe a relationship graph
+        //! per database.
+        //!
+        //! Returns the total number of truncated rows.
+        //! 
+        //! Issues
+        //! - Truncation should check prematurely for any existing relationships and return
+        //! an error saying the same if they do.
+
+        let table = self
+            .get_table(table_name)
+            .expect(format!("Table {} does not exist.", table_name).as_str());
+
+        let mut table_ref = table.write().unwrap();
+        let mut truncated_row_count = 0;
+
+        truncated_row_count += table_ref.delete_all();
+
+        Ok(truncated_row_count)
+    }
+
+    pub fn drop_table(&mut self, table_name: &str) -> Result<usize, String> {
+        //! Removes a table from the database's table registry.
+        //! 
+        //! Issues
+        //! - Dropping should check if there are any relationships referring to the 
+        //! target table, and raise an error if there are relationships to prevent
+        //! dangling FKs.
+        
+        let dropped_table = self.tables.remove(table_name).unwrap();
+        let dropped_table_row_count = dropped_table.read().unwrap()._rows();
+        
+        Ok(dropped_table_row_count)
+    }
 }
 
 impl DatabaseRegistry {
@@ -423,12 +465,12 @@ impl DatabaseRegistry {
 
     pub fn drop_database(&mut self, db_name: &str) -> Option<Arc<RwLock<Database>>> {
         //! Delete an existing database
-        //! 
+        //!
         //! The registry will FORCE a delete regardless of whether there are foreign key connections
         //! or not.
-        //! 
+        //!
         //! It will also ignore any RESTRICT in the command lines if such a statement is run.
-        
+
         self.registry.shift_remove(db_name)
     }
 }
