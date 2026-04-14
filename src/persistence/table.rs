@@ -1,4 +1,5 @@
 use log::warn;
+use serde::{Deserialize, Serialize};
 
 use crate::cli::{FunctionArg, SelectColumn};
 use crate::functions::{aggregators, scalars};
@@ -63,6 +64,20 @@ pub struct Table {
     pub(crate) primary_key_columns: Vec<usize>,
     pub(crate) is_indexed: bool,
     pub(crate) index: Index,
+}
+
+/// Serialization type for the [`Table`] struct
+///
+/// Removes the unneeded [`Arc`] and [`RwLock`] enclosures to
+/// give a raw storable object type.
+#[derive(Serialize, Deserialize)]
+pub struct TableData {
+    name: String,
+    schema: Schema,
+    rows: Vec<Row>,
+    primary_key_columns: Vec<usize>,
+    is_indexed: bool,
+    index: Index,
 }
 
 /// Creates a reader object over a [Table]'s data snapshot.
@@ -636,6 +651,34 @@ impl Table {
         }
 
         Ok(result)
+    }
+}
+
+/// Serializable interface for the [`Table`] struct.
+///
+/// Preserves the inner types and restores them on demand. This interface
+/// will be directly usable inside a [`super::Database`] serializer.
+impl Table {
+    pub fn to_data(&self) -> TableData {
+        TableData {
+            name: self.name.clone(),
+            schema: self.schema.read().unwrap().clone(),
+            rows: self.rows.read().unwrap().clone(),
+            primary_key_columns: self.primary_key_columns.clone(),
+            is_indexed: self.is_indexed,
+            index: self.index.clone(),
+        }
+    }
+
+    pub fn from_data(data: TableData) -> Self {
+        Table {
+            name: data.name,
+            schema: Arc::new(RwLock::new(data.schema)),
+            rows: Arc::new(RwLock::new(data.rows)),
+            primary_key_columns: data.primary_key_columns,
+            is_indexed: data.is_indexed,
+            index: data.index,
+        }
     }
 }
 

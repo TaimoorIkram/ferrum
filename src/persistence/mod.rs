@@ -15,3 +15,6 @@ mod index;
 pub use database::{Database, DatabaseRegistry};
 pub use table::{Table, TableReader};
 pub use row::Row;
+
+// External API for (De)Serialization
+pub use database::DatabaseRegistryData;

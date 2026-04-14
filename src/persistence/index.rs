@@ -1,3 +1,4 @@
+use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 
 /// The basic types of key linkages allowed between records.
@@ -15,7 +16,7 @@ pub(crate) enum Key {
 
 /// A simple foreign key constraint, that will be returned and saved in
 /// the [super::schema::Schema]'s [super::schema::ColumnInformation].
-#[derive(Clone)]
+#[derive(Clone, Serialize, Deserialize)]
 pub(crate) struct ForeignKeyConstraint {
     pub(crate) table_name: String,
     pub(crate) column_name: String,
@@ -31,6 +32,7 @@ pub(crate) struct ForeignKeyConstraint {
 /// that the data becomes corrupted upon running in multi-threaded mode!
 /// - Index management to allow more than one indexes to be created for a [super::Table],
 /// making more efficient searching possible on different column combinations.
+#[derive(Clone, Serialize, Deserialize)]
 pub(crate) struct Index {
     key_index_map: HashMap<String, usize>,
 }

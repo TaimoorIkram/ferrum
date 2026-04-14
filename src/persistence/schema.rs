@@ -1,8 +1,9 @@
+use serde::{Deserialize, Serialize};
 use std::fmt::Display;
 
 use crate::persistence::index::ForeignKeyConstraint;
 
-#[derive(Clone)]
+#[derive(Clone, Serialize, Deserialize)]
 pub enum DataType {
     Number,
     Text,
@@ -18,7 +19,7 @@ impl Display for DataType {
     }
 }
 
-#[derive(Clone)]
+#[derive(Clone, Serialize, Deserialize)]
 pub struct ColumnInformation {
     pub(super) datatype: DataType,
     pub(super) max_limit: Option<usize>,
@@ -55,6 +56,7 @@ impl ColumnInformation {
     }
 }
 
+#[derive(Clone, Serialize, Deserialize)]
 pub struct Schema(Vec<(String, ColumnInformation)>);
 
 impl Schema {

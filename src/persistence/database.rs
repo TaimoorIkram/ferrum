@@ -4,8 +4,9 @@ use std::{
 };
 
 use indexmap::IndexMap;
+use serde::{Deserialize, Serialize};
 
-use crate::persistence::{Row, index::ForeignKeyConstraint};
+use crate::persistence::{Row, index::ForeignKeyConstraint, table::TableData};
 
 use super::table::Table;
 
@@ -36,6 +37,15 @@ pub struct Database {
     tables: HashMap<String, Arc<RwLock<Table>>>,
 }
 
+/// A serializable interface for the [`Database`] struct.
+///
+/// Cascades to use the [`TableData`] serializer interface.
+#[derive(Serialize, Deserialize)]
+pub struct DatabaseData {
+    name: String,
+    tables: HashMap<String, TableData>,
+}
+
 /// A single place to store all databases.
 ///
 /// A [`DatabaseRegistry`] controls and provides connections to sessions to mutate the database
@@ -49,6 +59,19 @@ pub struct Database {
 /// to the [`Row`] which is much more effort than needed for a simple registry like this.
 pub struct DatabaseRegistry {
     registry: IndexMap<String, Arc<RwLock<Database>>>,
+}
+
+/// A serializable interface for the core [`DatabaseRegistry`] data
+/// structure.
+///
+/// This is the main entry point for the serialization pipe and uses the
+/// underlying [`DatabaseData`] serializer interface.
+///
+/// IMPORTANT: Registry is strictly based on the IndexMap but it is not
+/// directly serializable. Using HashMap but it MUST be indexed before it can be used.
+#[derive(Serialize, Deserialize)]
+pub struct DatabaseRegistryData {
+    registry: IndexMap<String, DatabaseData>,
 }
 
 impl Database {
@@ -373,7 +396,7 @@ impl Database {
         //! per database.
         //!
         //! Returns the total number of truncated rows.
-        //! 
+        //!
         //! Issues
         //! - Truncation should check prematurely for any existing relationships and return
         //! an error saying the same if they do.
@@ -392,16 +415,45 @@ impl Database {
 
     pub fn drop_table(&mut self, table_name: &str) -> Result<usize, String> {
         //! Removes a table from the database's table registry.
-        //! 
+        //!
         //! Issues
-        //! - Dropping should check if there are any relationships referring to the 
+        //! - Dropping should check if there are any relationships referring to the
         //! target table, and raise an error if there are relationships to prevent
         //! dangling FKs.
-        
+
         let dropped_table = self.tables.remove(table_name).unwrap();
         let dropped_table_row_count = dropped_table.read().unwrap()._rows();
-        
+
         Ok(dropped_table_row_count)
+    }
+}
+
+// Database serialization
+impl Database {
+    pub fn to_data(&self) -> DatabaseData {
+        let tables = self
+            .tables
+            .iter()
+            .map(|(name, table)| (name.clone(), table.read().unwrap().to_data()))
+            .collect();
+
+        DatabaseData {
+            name: self.name.clone(),
+            tables,
+        }
+    }
+
+    pub fn from_data(data: DatabaseData) -> Self {
+        let tables = data
+            .tables
+            .into_iter()
+            .map(|(name, table_data)| (name, Arc::new(RwLock::new(Table::from_data(table_data)))))
+            .collect();
+
+        Database {
+            name: data.name,
+            tables,
+        }
     }
 }
 
@@ -472,5 +524,28 @@ impl DatabaseRegistry {
         //! It will also ignore any RESTRICT in the command lines if such a statement is run.
 
         self.registry.shift_remove(db_name)
+    }
+}
+
+// DatabaseRegistry serialization
+impl DatabaseRegistry {
+    pub fn to_data(&self) -> DatabaseRegistryData {
+        let registry = self
+            .registry
+            .iter()
+            .map(|(name, db)| (name.clone(), db.read().unwrap().to_data()))
+            .collect();
+
+        DatabaseRegistryData { registry }
+    }
+
+    pub fn from_data(data: DatabaseRegistryData) -> Self {
+        let registry = data
+            .registry
+            .into_iter()
+            .map(|(name, db_data)| (name, Arc::new(RwLock::new(Database::from_data(db_data)))))
+            .collect();
+
+        DatabaseRegistry { registry }
     }
 }
