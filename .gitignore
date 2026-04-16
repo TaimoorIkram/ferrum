@@ -6,4 +6,6 @@ scripts/
 
 # Files
 /*.md
-/.env*
+/.env.prod
+/.env.dev
+/.env
