@@ -1,1 +1,9 @@
-/target
+# Folders
+target/
+data/
+extras/
+scripts/
+
+# Files
+/*.md
+/.env*
