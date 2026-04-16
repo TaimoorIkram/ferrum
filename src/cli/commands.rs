@@ -911,15 +911,7 @@ impl SqlExecutor {
 
                         if let Some(table) = database.get_table(&table_name) {
                             let table = table.read().unwrap();
-                            let table_schema_vec: Vec<String> = {
-                                let schema = table.schema.read().unwrap();
-                                schema
-                                    .get_vec()
-                                    .iter()
-                                    .map(|(col, _)| col)
-                                    .cloned()
-                                    .collect()
-                            };
+                            // Moved table_schema_vec so an up to date select index is prepared.
 
                             match select_mode {
                                 SqlExecutorSelectMode::Aggregate => {
@@ -969,6 +961,16 @@ impl SqlExecutor {
                                     }
 
                                     if let Some(selection) = select.selection.as_ref() {
+                                        let table_schema_vec: Vec<String> = {
+                                            let schema = result_table.schema.read().unwrap();
+                                            schema
+                                                .get_vec()
+                                                .iter()
+                                                .map(|(col, _)| col)
+                                                .cloned()
+                                                .collect()
+                                        };
+
                                         let filter =
                                             self._parse_selection(selection, &table_schema_vec)?;
                                         result_table = result_table.filter(filter).unwrap();
