@@ -1,5 +1,6 @@
 use std::{
     io::{self, Write},
+    path::Path,
     sync::{Arc, RwLock},
 };
 
@@ -13,7 +14,9 @@ use crate::{
         messages::{highlight_argument, system_message},
         parsers::SqlParser,
     },
+    config::EngineConfig,
     persistence::DatabaseRegistry,
+    serialization::{deserializers::load_registry, registry_exists, serializers::save_registry},
     sessions::session::Session,
 };
 
@@ -38,21 +41,55 @@ const FERRUM_ENGINE_COMMANDS_LIST: [(&str, &str); 4] = [
     ),
 ];
 
-pub fn run_client() {
+pub fn run_client(config: &EngineConfig) {
     splash_screen::splash_screen();
 
-    let registry = Arc::new(RwLock::new(DatabaseRegistry::new()));
+    let _reg: DatabaseRegistry;
+    let _reg_path = Path::new(config.registry_file_path.as_str());
+
+    if registry_exists(_reg_path) {
+        _reg = load_registry(_reg_path).unwrap();
+        println!(
+            "{}",
+            system_message(
+                "info",
+                format!("A restored database registry was created at the session level.")
+            )
+        );
+    } else {
+        println!(
+            "{}",
+            system_message(
+                "info",
+                format!(
+                    "Failed to find registry at '{}'.",
+                    highlight_argument(_reg_path.to_str().unwrap())
+                )
+            )
+        );
+        _reg = DatabaseRegistry::new();
+        println!(
+            "{}",
+            system_message(
+                "info",
+                format!("A default database registry was created at the session level.")
+            )
+        );
+    }
+
+    let registry = Arc::new(RwLock::new(_reg));
     let session = Arc::new(RwLock::new(Session::client(&registry)));
+
+    start_repl(session);
 
     println!(
         "{}",
         system_message(
             "info",
-            format!("A default database registry was created at the session level.")
+            format!("Saving registry to '{}'.", _reg_path.to_str().unwrap())
         )
     );
-
-    start_repl(session);
+    save_registry(&registry.read().unwrap().clone(), _reg_path).unwrap();
 }
 
 pub fn run_server() {
@@ -197,6 +234,4 @@ fn start_repl(client_session: Arc<RwLock<Session>>) {
             }
         }
     }
-
-    println!("Goodbye!")
 }

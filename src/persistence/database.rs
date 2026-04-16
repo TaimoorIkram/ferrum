@@ -57,6 +57,7 @@ pub struct DatabaseData {
 /// An [`Arc<RwLock<Database>>`] keeps things simple to deal with, when providing sessions with
 /// handles to these databases. Using a simple Database asks for trait derivation cascades down
 /// to the [`Row`] which is much more effort than needed for a simple registry like this.
+#[derive(Clone)]
 pub struct DatabaseRegistry {
     registry: IndexMap<String, Arc<RwLock<Database>>>,
 }
@@ -66,9 +67,6 @@ pub struct DatabaseRegistry {
 ///
 /// This is the main entry point for the serialization pipe and uses the
 /// underlying [`DatabaseData`] serializer interface.
-///
-/// IMPORTANT: Registry is strictly based on the IndexMap but it is not
-/// directly serializable. Using HashMap but it MUST be indexed before it can be used.
 #[derive(Serialize, Deserialize)]
 pub struct DatabaseRegistryData {
     registry: IndexMap<String, DatabaseData>,
