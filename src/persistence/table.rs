@@ -712,6 +712,13 @@ impl TableReader {
         }
     }
 
+    pub fn new_from(schema: Vec<(String, ColumnInformation)>, rows: Vec<Row>) -> TableReader {
+        TableReader {
+            schema: Arc::new(RwLock::new(Schema::new(schema.clone()))),
+            rows: Arc::new(RwLock::new(rows)),
+        }
+    }
+
     pub fn count_rows(&self) -> usize {
         self.rows.read().unwrap().len()
     }

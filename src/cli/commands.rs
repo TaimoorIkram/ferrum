@@ -24,9 +24,9 @@ use std::vec;
 
 use indexmap::IndexMap;
 use sqlparser::ast::{
-    Assignment, BinaryOperator, ColumnDef, ColumnOption, DataType, Expr, Function, LimitClause,
-    ObjectName, OrderBy, Select, SelectItem, SetExpr, Statement, TableConstraint, TableFactor,
-    TableObject, TableWithJoins, Use, Value, ValueWithSpan,
+    Assignment, BinaryOperator, ColumnDef, ColumnOption, DataType, Expr, Function, Join,
+    JoinConstraint, JoinOperator, LimitClause, ObjectName, OrderBy, Select, SelectItem, SetExpr,
+    Statement, TableConstraint, TableFactor, TableObject, Use, Value, ValueWithSpan,
 };
 
 use crate::cli::messages::{highlight_argument, system_message};
@@ -407,6 +407,37 @@ impl SqlExecutor {
                                 select_mode = Some(SqlExecutorSelectMode::Aggregate);
                             }
                         }
+                        sqlparser::ast::Expr::CompoundIdentifier(c_ident) => {
+                            let column_name = c_ident
+                                .iter()
+                                .map(|item| item.value.clone())
+                                .collect::<Vec<String>>()
+                                .join(".");
+
+                            if let Some(mode) = &select_mode {
+                                match mode {
+                                    SqlExecutorSelectMode::Aggregate => {
+                                        return Err(system_message(
+                                            "exctr",
+                                            format!(
+                                                "Invalid {}; columns not allowed with aggregators.",
+                                                highlight_argument(&column_name)
+                                            ),
+                                        ));
+                                    }
+                                    _ => {}
+                                }
+                            };
+
+                            column_names.push(SelectColumn::Column {
+                                name: column_name,
+                                alias: None,
+                            });
+
+                            if select_mode.is_none() {
+                                select_mode = Some(SqlExecutorSelectMode::Column);
+                            }
+                        }
                         _ => {
                             return Err(system_message(
                                 "exctr",
@@ -440,8 +471,8 @@ impl SqlExecutor {
         ))
     }
 
-    fn _extract_table_name(&self, table_with_joins: &TableWithJoins) -> Result<String, String> {
-        match &table_with_joins.relation {
+    fn _extract_table_name(&self, relation: &TableFactor) -> Result<String, String> {
+        match &relation {
             TableFactor::Table { name, .. } => Ok(name
                 .0
                 .iter()
@@ -567,6 +598,11 @@ impl SqlExecutor {
 
                 Ok(format!("{}{}", prefix, value))
             }
+            Expr::CompoundIdentifier(v_ident) => {
+                let col_name_joined: Vec<String> =
+                    v_ident.iter().map(|ident| ident.value.clone()).collect();
+                Ok(col_name_joined.join("."))
+            }
             _ => {
                 return Err(system_message(
                     "system",
@@ -675,12 +711,120 @@ impl SqlExecutor {
         }
     }
 
+    fn _parse_selection_col(
+        &self,
+        selection: &Expr,
+        table_schema_vec_left: &Vec<String>,
+        table_schema_vec_right: &Vec<String>,
+    ) -> Result<Box<dyn Fn(&Row, &Row) -> bool>, String> {
+        //! Parse the [`Expr::BinaryOp`] variant to a filter.
+        //!
+        //! Returns a closure `Fn(&Row, &Row) -> bool` that takes a row to check
+        //! if it is a fit over the filter. I intend it to be used inside a filter
+        //! function on a tabler reader as well.
+        //!
+        //! This function takes the schema vectors of the left and right tables in order,
+        //! performs the attribute search to derive the desired column and then uses the
+        //! index to perform matches on the rows.
+        //!
+        //! In the future this can be improved by indexing the columns by frequently used
+        //! join index, thereby reducin the processing times from O(n x m) to O(1).
+        //!
+        //! This function is a join-friendly version of [`Self::_parse_selection`] function
+
+        match selection {
+            Expr::BinaryOp { left, op, right } => match op {
+                BinaryOperator::Or => {
+                    let left_filter = self._parse_selection_col(
+                        left,
+                        table_schema_vec_left,
+                        table_schema_vec_right,
+                    )?;
+                    let right_filter = self._parse_selection_col(
+                        right,
+                        table_schema_vec_left,
+                        table_schema_vec_right,
+                    )?;
+
+                    Ok(Box::new(move |row1, row2| {
+                        left_filter(row1, row2) || right_filter(row1, row2)
+                    }))
+                }
+                BinaryOperator::And => {
+                    let left_filter = self._parse_selection_col(
+                        left,
+                        table_schema_vec_left,
+                        table_schema_vec_right,
+                    )?;
+                    let right_filter = self._parse_selection_col(
+                        right,
+                        table_schema_vec_left,
+                        table_schema_vec_right,
+                    )?;
+
+                    Ok(Box::new(move |row1, row2| {
+                        left_filter(row1, row2) && right_filter(row1, row2)
+                    }))
+                }
+                BinaryOperator::Eq => {
+                    let (col_index, target_col_index) = self._parse_operands_col(
+                        left.as_ref(),
+                        right.as_ref(),
+                        table_schema_vec_left,
+                        table_schema_vec_right,
+                    )?;
+
+                    // FAULT: NOT EXACT VALUE MATCHING....
+                    Ok(Box::new(move |row1, row2| {
+                        row1.0
+                            .get(col_index)
+                            .and_then(|v| v.as_ref())
+                            .map_or(false, |v| {
+                                v == row2
+                                    .0
+                                    .get(target_col_index)
+                                    .and_then(|v| v.as_ref())
+                                    .unwrap()
+                            })
+                        // .0.get(col_index).eq(&row2.0.get(target_col_index))
+                    }))
+                }
+                BinaryOperator::NotEq => {
+                    let (col_index, target_col_index) = self._parse_operands_col(
+                        left.as_ref(),
+                        right.as_ref(),
+                        table_schema_vec_left,
+                        table_schema_vec_right,
+                    )?;
+
+                    // FAULT: NOT EXACT VALUE MATCHING....
+                    Ok(Box::new(move |row1, row2| {
+                        row1.0
+                            .get(col_index)
+                            .and_then(|v| v.as_ref())
+                            .map_or(false, |v| {
+                                v != row2
+                                    .0
+                                    .get(target_col_index)
+                                    .and_then(|v| v.as_ref())
+                                    .unwrap()
+                            })
+                    }))
+                }
+                _ => Err(format!("Invalid query filter. Check your query.")),
+            },
+            _ => Err(format!("Invalid column selection. Check your query.")),
+        }
+    }
+
     fn _parse_operands(
         &self,
         left: &Expr,
         right: &Expr,
         table_schema_vec: &Vec<String>,
     ) -> Result<(usize, String), String> {
+        //! Returns the column index and the value to match.
+
         let col_name = self._parse_expr(left)?;
         let value = self._parse_expr(right)?;
 
@@ -690,6 +834,49 @@ impl SqlExecutor {
             .ok_or_else(|| format!("Column {} does not exist!", highlight_argument(&col_name)))?;
 
         Ok((col_index, value))
+    }
+
+    fn _parse_operands_col(
+        &self,
+        left: &Expr,
+        right: &Expr,
+        table_schema_vec_left: &Vec<String>,
+        table_schema_vec_right: &Vec<String>,
+    ) -> Result<(usize, usize), String> {
+        //! Returns the column indices to match on.
+        //!
+        //! This is usable in joins, where one column from one table has to
+        //! be checked with the items from another column.
+
+        let col_name = self._parse_expr(left)?;
+        let target_col_name = self._parse_expr(right)?;
+
+        println!(
+            "Finding {} in left and {} in right.",
+            col_name, target_col_name
+        );
+
+        let col_index = table_schema_vec_left
+            .iter()
+            .position(|col| col == col_name.split(".").collect::<Vec<&str>>().get(1).unwrap())
+            .ok_or_else(|| {
+                format!(
+                    "Column {} does not exist! Make sure left table is left in comparison clause.",
+                    highlight_argument(&col_name)
+                )
+            })?;
+
+        let target_col_index = table_schema_vec_right
+            .iter()
+            .position(|col| col == target_col_name.split(".").collect::<Vec<&str>>().get(1).unwrap())
+            .ok_or_else(|| format!("Column {} does not exist! Make sure right table is right in comparison clause.", highlight_argument(&target_col_name)))?;
+
+        println!(
+            "Found {} at index {} in left and {} at index {} in right.",
+            col_name, col_index, target_col_name, target_col_index
+        );
+
+        Ok((col_index, target_col_index))
     }
 
     fn _parse_assignment(&self, assignment: Assignment) -> Result<(String, String), String> {
@@ -861,6 +1048,143 @@ impl SqlExecutor {
             .clone()
     }
 
+    fn _parse_join_operator(
+        &self,
+        join_operator: &JoinOperator,
+        table_schema_vec_left: &Vec<String>,
+        table_schema_vec_right: &Vec<String>,
+    ) -> Result<(String, Box<dyn Fn(&Row, &Row) -> bool>), String> {
+        //! Parse the join operator to a boxed filter.
+        //!
+        //! Additionally perform checks for the type of join involved.
+        //!
+        //! Retuns a (type, filter) pair containing information regarding join type and
+        //! the filter to obtain matching rows for joined table formation.
+        //!
+        //! # Issues
+        //! - Swap the left and right schemas for the RIGHT join type. Figure out how to
+        //! do it.
+
+        // Reminder: Add more types of joins here.
+        let (join_type, join) = match join_operator {
+            JoinOperator::Left(join) => ("left".to_string(), join),
+            JoinOperator::Inner(join) => ("inner".to_string(), join),
+            _ => return Err(format!("join operation of this type is not supported.")),
+        };
+
+        match join {
+            JoinConstraint::On(on) => {
+                // THINK: Do we need separate table schema vecs of the joining tables?
+                // THOUGHT: Separate schema vecs are to be used to derive exact indexes.
+                let filter =
+                    self._parse_selection_col(&on, table_schema_vec_left, table_schema_vec_right);
+                Ok((join_type, filter.unwrap()))
+            }
+            _ => Err(format!("join ON is supported only for now.")),
+        }
+    }
+
+    fn _perform_join(&self, table: TableReader, operation: &Join) -> Result<TableReader, String> {
+        //! Find the two tables in the database and join them.
+        //!
+        //! This method is supposed to perform the following steps in order:
+        //! 1. Takes in the names of the tables and finds them in the database.
+        //! 2. Obtains a reader on both.
+        //! 3. Creates a new [`Vec<Schema>`] and [`Vec<Row>`] as an in-order merger.
+        //! 4. Identifies the join type.
+        //! 5. Creates the condition filter to run on both tables.
+        //! 6. Runs filter and merges matching rows into the vector.
+        //! 7. Returns a fresh TableReader with newly created schema and rows.
+        //!
+        //! Currently supports left join and inner join.
+        //!
+        //! Intended join types to implement later if I feel like it:
+        //! - (INNER) JOIN: Matches rows from both tables.
+        //! - LEFT/RIGHT (OUTER) JOIN: Returns all rows from one table, plus matches from the other.
+        //! - FULL (OUTER) JOIN: Includes all rows from both tables.
+        //! - CROSS JOIN: Produces a Cartesian product.
+        //! - SELF JOIN: Joins a table to itself.
+        //!
+        //! # Issues
+        //! - Implement the remaining join types, subject to simplicity.
+
+        let db_arc = {
+            let _s = self.session.read().unwrap();
+            _s.get_active_database().unwrap()
+        };
+
+        let to_table_name = self._extract_table_name(&operation.relation)?;
+        let to_table = {
+            let _db = db_arc.read().unwrap();
+            let _t = _db.get_table(&to_table_name).unwrap();
+            _t.read().unwrap().reader()
+        };
+
+        let mut new_schema = table.schema.read().unwrap().get_vec().clone();
+        new_schema.extend(to_table.schema.read().unwrap().get_vec().clone());
+
+        let operator = &operation.join_operator;
+
+        // Filter
+        let table_schema_vec_left: Vec<String> = table
+            .schema
+            .read()
+            .unwrap()
+            .get_vec()
+            .iter()
+            .map(|(col_name, _)| col_name.clone())
+            .collect();
+        let table_schema_vec_right: Vec<String> = to_table
+            .schema
+            .read()
+            .unwrap()
+            .get_vec()
+            .iter()
+            .map(|(col_name, _)| col_name.clone())
+            .collect();
+
+        let (join_type, filter) =
+            self._parse_join_operator(operator, &table_schema_vec_left, &table_schema_vec_right)?;
+
+        let mut new_rows: Vec<Row> = vec![];
+
+        // Run Filter
+        for row_left in table.rows.read().unwrap().iter() {
+            let mut matches = 0;
+            for row_right in to_table.rows.read().unwrap().iter() {
+                let mut new_row = row_left.clone();
+                if filter(row_left, row_right) {
+                    // Behaviour when the common rows are found; remains the same
+                    // regardless of the join type.
+
+                    new_row.0.extend(row_right.0.clone());
+                    matches += 1;
+                    new_rows.push(new_row);
+                } else {
+                    // Behaviour when the uncommon rows are found. Varies by join type
+                    // so we may or may not push rows. Code each behaviour separately.
+
+                    match join_type.as_str() {
+                        "left" => {
+                            new_row.0.extend(vec![
+                                Some("NULL".to_string());
+                                to_table.schema.read().unwrap().len()
+                            ]);
+                            new_rows.push(new_row);
+                        }
+                        _ => {}
+                    }
+                }
+            }
+            println!("Found {} matches for row in left.", matches);
+        }
+
+        // Create Reader from New Schema and Data
+        let new_reader = TableReader::new_from(new_schema, new_rows);
+
+        Ok(new_reader)
+    }
+
     pub fn new(statement: Statement, session: &Arc<RwLock<Session>>) -> SqlExecutor {
         SqlExecutor {
             statement,
@@ -883,7 +1207,7 @@ impl SqlExecutor {
                             "exctr",
                             "There is no table name after FROM keyword.".to_string(),
                         ))?;
-                        let table_name = self._extract_table_name(table_with_joins)?;
+                        let table_name = self._extract_table_name(&table_with_joins.relation)?;
 
                         println!(
                             "{}",
@@ -924,7 +1248,15 @@ impl SqlExecutor {
                                     })
                                 }
                                 SqlExecutorSelectMode::Column => {
-                                    let reader = table.reader();
+                                    let mut reader = table.reader();
+
+                                    // TODO: Try making a join here, so a base table is formed
+                                    // before any select column operations are performed.
+                                    if table_with_joins.joins.len() > 0 {
+                                        for join in table_with_joins.joins.iter() {
+                                            reader = self._perform_join(reader, join)?;
+                                        }
+                                    }
                                     let mut result_table;
 
                                     let cols: Vec<String> = column_names
@@ -953,7 +1285,7 @@ impl SqlExecutor {
                                     // - A vec based wrapper
                                     // - A wildcard check method or enum variant
                                     if cols.contains(&"*".to_string()) {
-                                        result_table = table.reader();
+                                        result_table = reader;
                                     } else {
                                         // TODO: Update this call to include alias, so reader can display readable
                                         // column names.
@@ -1136,7 +1468,7 @@ impl SqlExecutor {
                             "exctr",
                             "There is no table name after FROM keyword.".to_string(),
                         ))?;
-                        self._extract_table_name(table_with_joins)?
+                        self._extract_table_name(&table_with_joins.relation)?
                     }
                     _ => return Err("Invalid DELETE statement.".to_string()),
                 };
@@ -1178,7 +1510,7 @@ impl SqlExecutor {
             }
             Statement::Update(update) => {
                 let table_with_joins = &update.table;
-                let table_name = self._extract_table_name(table_with_joins)?;
+                let table_name = self._extract_table_name(&table_with_joins.relation)?;
 
                 let db_arc = self._get_db_from_session()?;
                 let mut database = db_arc.write().unwrap();
