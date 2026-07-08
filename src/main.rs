@@ -5,6 +5,7 @@ use ferrum_engine::{
         parsers::{CliMode, CliParser},
     },
     config::EngineConfig,
+    logging::init_logger,
 };
 
 fn main() {
@@ -12,6 +13,7 @@ fn main() {
     // let args: Vec<String> = env::args().collect();
 
     let config = EngineConfig::new();
+    init_logger(config.debug_mode, Some(&config.log_file_path));
 
     let mode = args
         .mode

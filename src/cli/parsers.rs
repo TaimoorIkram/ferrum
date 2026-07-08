@@ -6,7 +6,9 @@
 use clap::{Parser, ValueEnum, arg, command};
 use sqlparser::{ast::Statement, dialect::Dialect, parser};
 
-use crate::cli::messages::{highlight_argument, system_message};
+use crate::{
+    cli::messages::{highlight_argument, system_message}, logging::{log_debug, log_error},
+};
 
 #[derive(Parser)]
 #[command(name = "ferrum")]
@@ -46,7 +48,10 @@ impl SqlParser {
         //! Returns an AST of statements.
 
         let ast = parser::Parser::parse_sql(self.dialect.as_ref(), statement);
+        log_debug(&format!("{:#?}", ast));
+
         ast.map_err(|e| {
+            log_error(&format!("Error parsing query: {}", e.to_string().as_str()));
             system_message(
                 "parser",
                 format!(
@@ -65,6 +70,7 @@ impl SqlParser {
         let mut statements = self.parse_sql(statement)?;
 
         if statements.len() > 1 {
+            log_error("More than one SQL statements entered at a time.");
             Err(system_message(
                 "parser",
                 "Please write a single statement at a time.".to_string(),

@@ -11,10 +11,11 @@ use crate::{
     cli::{
         colors::FERRUM_RED,
         commands::{SqlExecutor, SqlResult},
-        messages::{highlight_argument, system_message},
+        messages::highlight_argument,
         parsers::SqlParser,
     },
     config::EngineConfig,
+    logging::{log_error, log_info},
     persistence::DatabaseRegistry,
     serialization::{deserializers::load_registry, registry_exists, serializers::save_registry},
     sessions::session::Session,
@@ -49,32 +50,16 @@ pub fn run_client(config: &EngineConfig) {
 
     if registry_exists(_reg_path) {
         _reg = load_registry(_reg_path).unwrap();
-        println!(
-            "{}",
-            system_message(
-                "info",
-                format!("A restored database registry was created at the session level.")
-            )
-        );
+        log_info("A restored database registry was created at the session level.");
     } else {
-        println!(
-            "{}",
-            system_message(
-                "info",
-                format!(
-                    "Failed to find registry at '{}'.",
-                    highlight_argument(_reg_path.to_str().unwrap())
-                )
-            )
-        );
+        log_info(&format!(
+            "Failed to find registry at '{}'.",
+            _reg_path.to_str().unwrap()
+        ));
         _reg = DatabaseRegistry::new();
-        println!(
-            "{}",
-            system_message(
-                "info",
-                format!("A default database registry was created at the session level.")
-            )
-        );
+        log_info(&format!(
+            "A default database registry was created at the session level."
+        ));
     }
 
     let registry = Arc::new(RwLock::new(_reg));
@@ -82,65 +67,43 @@ pub fn run_client(config: &EngineConfig) {
 
     start_repl(session);
 
-    println!(
-        "{}",
-        system_message(
-            "info",
-            format!("Saving registry to '{}'.", _reg_path.to_str().unwrap())
-        )
-    );
+    log_info(&format!(
+        "Saving registry to '{}'.",
+        _reg_path.to_str().unwrap()
+    ));
     save_registry(&registry.read().unwrap().clone(), _reg_path).unwrap();
 }
 
 pub fn run_server() {
-    println!("Mode server is not supported yet. Try 'client'.");
+    log_error("Mode server is not supported yet. Try 'client'.");
 }
 
 pub fn show_help() {
-    println!(
-        "{}",
-        system_message(
-            "info",
-            format!(
-                "Any other statements are considered {}.",
-                highlight_argument("sql statements")
-            )
-        )
-    );
+    log_info(&format!(
+        "Any other statements are considered {}.",
+        highlight_argument("sql statements")
+    ));
 
-    println!();
-    println!("{:10} {}", "COMMAND".color(FERRUM_RED), "DETAILS");
+    log_info("");
+    log_info(&format!("{:10} {}", "COMMAND".color(FERRUM_RED), "DETAILS"));
     for (command, details) in FERRUM_ENGINE_COMMANDS_LIST {
-        println!("{:10} {}", command.color(FERRUM_RED), details)
+        log_info(&format!("{:10} {}", command.color(FERRUM_RED), details));
     }
 }
 
 fn start_repl(client_session: Arc<RwLock<Session>>) {
-    println!(
-        "{}",
-        system_message(
-            "system",
-            format!(
-                "Use '{}' to quit and '{}' to know all commands available.",
-                highlight_argument("corrode"),
-                highlight_argument("help"),
-            ),
-        )
-    );
+    log_info(&format!(
+        "Use '{}' to quit and '{}' to know all commands available.",
+        "corrode", "help",
+    ));
 
     {
         let session = client_session.read().unwrap();
         let session_start_time = session.start_time_string();
-        println!(
-            "{}",
-            system_message(
-                "system",
-                format!(
-                    "New session initiated at '{}'.",
-                    highlight_argument(&session_start_time)
-                ),
-            )
-        );
+        log_info(&format!(
+            "New session initiated at '{}'.",
+            &session_start_time
+        ));
     }
 
     loop {
@@ -159,16 +122,7 @@ fn start_repl(client_session: Arc<RwLock<Session>>) {
             let last_command = session.get_last_command(last);
 
             if last_command.is_none() {
-                println!(
-                    "{}",
-                    system_message(
-                        "system",
-                        format!(
-                            "No command {} steps back.",
-                            highlight_argument(&last.to_string())
-                        ),
-                    )
-                );
+                log_info(&format!("No command {} steps back.", &last.to_string()));
                 continue;
             } else {
                 buffer = last_command.unwrap().to_string();
@@ -194,35 +148,23 @@ fn start_repl(client_session: Arc<RwLock<Session>>) {
 
                 match parser.parse_single_sql(sql) {
                     Ok(statement) => {
-                        println!(
-                            "{}",
-                            system_message(
-                                "ferrum",
-                                "The statement was parsed successfully!".to_string(),
-                            )
-                        );
+                        log_info("The statement was parsed successfully!");
 
                         let executor = SqlExecutor::new(statement, &client_session);
                         match executor.execute() {
                             Ok(result) => {
-                                println!(
-                                    "{}",
-                                    system_message(
-                                        "ferrum",
-                                        format!(
-                                            "{} row(s) processed!",
-                                            result.n_rows_processed.unwrap_or(0)
-                                        )
-                                    )
-                                );
+                                log_info(&format!(
+                                    "{} row(s) processed!",
+                                    result.n_rows_processed.unwrap_or(0)
+                                ));
 
                                 query_result = Some(result);
                             }
-                            Err(error) => println!("{}", error),
+                            Err(error) => println!("Execution Error: {}", error),
                         }
                     }
                     Err(error) => {
-                        println!("{}", error);
+                        println!("Parsing Error: {}", error);
                     }
                 };
             }

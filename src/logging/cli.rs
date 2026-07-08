@@ -1,18 +1,32 @@
-//! General message formatting functions for prettifying the CLI.
-//! Includes basic utility functions such as:
-//!
-//! - Highlight Text (make the text ferrum red but not bold)
-//! - Highlight Text Hard (make the text ferrum red and bold)
-//! - System message formatting functions that produce the same
-//! format messages.
+//! This file is a duplicate of the logging file located in ../cli/messages.rs
+//! Will probably be removed
 //! 
-//! # Issues
-//! - Add a conditional check later for server messages to be 
-//! created as basic string without any colors.
+//! - FERRUM_RED: Main Color
+//! 
+//! Should we keep the cli utils open for lower end functions
+//! to customize their messages?
+//! 
+//! This will be useful if the errors are to be designed to be
+//! easier to read and customized to the kind of error message 
+//! to be show?
+//! 
+//! Add a check for whether the code is running in server mode or 
+//! client mode.
+//! - Server mode means no text coloring to be applied.
+//! - Client mode means CLI is being run so apply formatting.
+//! 
 
 use colored::Colorize;
 
-use crate::cli::colors::FERRUM_RED;
+
+use colored::Color;
+
+pub(crate) const FERRUM_RED: Color = Color::TrueColor {
+    r: 255,
+    g: 87,
+    b: 87,
+};
+
 
 pub fn highlight_argument(argument: &str) -> String {
     //! Highlight a piece of text in the ferrum red

@@ -6,7 +6,10 @@ use std::{
 use indexmap::IndexMap;
 use serde::{Deserialize, Serialize};
 
-use crate::persistence::{Row, index::ForeignKeyConstraint, table::TableData};
+use crate::{
+    logging::log_error,
+    persistence::{Row, index::ForeignKeyConstraint, table::TableData},
+};
 
 use super::table::Table;
 
@@ -94,12 +97,21 @@ impl Database {
             {
                 Ok(index)
             } else {
+                // Add logging to all error returns, and in parallel, create custom error types carefully,
+                log_error(&format!(
+                    "Invalid foreign key on {}; column {} doesn't exist.",
+                    table_name, column_name
+                ));
                 Err(format!(
                     "invalid foreign key on {}; column {} doesn't exist ",
                     table_name, column_name
                 ))
             }
         } else {
+            log_error(&format!(
+                "Invalid foreign key on {}; column {} doesn't exist.",
+                table_name, column_name
+            ));
             Err(format!(
                 "invalid foreign key on {}; column {} doesn't exist ",
                 table_name, column_name
@@ -181,6 +193,10 @@ impl Database {
             let column_name = &constraint.column_name;
 
             if !self._validate_foreign_key(table_name, value)? {
+                log_error(&format!(
+                    "Value `{}` does not exist in `{}.{}`",
+                    value, table_name, column_name
+                ));
                 return Err(format!(
                     "err: does not exist: `{}` in `{}.{}`",
                     value, table_name, column_name
@@ -232,6 +248,10 @@ impl Database {
             if let Some(_t) = self.tables.get(table_name) {
                 _t.write().unwrap()
             } else {
+                log_error(&format!(
+                    "Table {} does not exist in database {}.",
+                    table_name, self.name
+                ));
                 return Err(format!("err: does not exist: table {}", table_name));
             }
         };
@@ -244,6 +264,10 @@ impl Database {
                 .get_foreign_key_constraint(column_name)
             {
                 if !self._validate_foreign_key(&constraint.table_name, &value)? {
+                    log_error(&format!(
+                        "Key '{}' does not exist on table '{}'.",
+                        &value, &constraint.table_name
+                    ));
                     return Err(format!(
                         "err: does not exist: key '{}' on table '{}'",
                         &value, &constraint.table_name
@@ -269,6 +293,10 @@ impl Database {
                     if let Some(_t) = self.tables.get(table_name) {
                         _t.write().unwrap()
                     } else {
+                        log_error(&format!(
+                            "Table {} does not exist in database {}.",
+                            table_name, self.name
+                        ));
                         return Err(format!("err: does not exist: table {}", table_name));
                     }
                 };
@@ -288,6 +316,10 @@ impl Database {
                 if let Some(_t) = self.tables.get_mut(table_name) {
                     _t.write().unwrap()
                 } else {
+                    log_error(&format!(
+                        "Table {} does not exist in database {}.",
+                        table_name, self.name
+                    ));
                     return Err(format!("err: does not exist: table {}", table_name));
                 }
             };
@@ -316,6 +348,10 @@ impl Database {
             if let Some(_t) = self.tables.get_mut(table_name) {
                 _t.write().unwrap()
             } else {
+                log_error(&format!(
+                    "Table {} does not exist in database {}.",
+                    table_name, self.name
+                ));
                 return Err(format!("err: does not exist: table {}", table_name));
             }
         };
@@ -483,6 +519,10 @@ impl DatabaseRegistry {
             if if_not_exists {
                 self.get_database(db_name)
             } else {
+                log_error(&format!(
+                    "Database {} already exists.",
+                    db_name
+                ));
                 Err(format!(
                     "Integrity violation; database {} already exists",
                     db_name
@@ -500,11 +540,12 @@ impl DatabaseRegistry {
     }
 
     pub fn get_database(&self, db_name: &str) -> Result<Arc<RwLock<Database>>, String> {
-        let db = self
-            .registry
-            .get(db_name)
-            .expect(format!("Database {} does not exist.", db_name).as_str());
-        Ok(Arc::clone(db))
+        if let Some(db) = self.registry.get(db_name) {
+            Ok(Arc::clone(db))
+        } else {
+            log_error(&format!("Database {} does not exist.", db_name));
+            Err(format!("Database {} does not exist.", db_name))
+        }
     }
 
     pub fn get_database_names(&self) -> Vec<String> {

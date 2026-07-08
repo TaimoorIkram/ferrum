@@ -31,6 +31,7 @@ use sqlparser::ast::{
 
 use crate::cli::messages::{highlight_argument, system_message};
 use crate::functions::{aggregators, scalars};
+use crate::logging::{log_debug, log_info};
 use crate::persistence::{Database, Row, TableReader};
 use crate::sessions::session::Session;
 
@@ -851,10 +852,10 @@ impl SqlExecutor {
         let col_name = self._parse_expr(left)?;
         let target_col_name = self._parse_expr(right)?;
 
-        println!(
+        log_debug(&format!(
             "Finding {} in left and {} in right.",
             col_name, target_col_name
-        );
+        ));
 
         let col_index = table_schema_vec_left
             .iter()
@@ -871,10 +872,10 @@ impl SqlExecutor {
             .position(|col| col == target_col_name.split(".").collect::<Vec<&str>>().get(1).unwrap())
             .ok_or_else(|| format!("Column {} does not exist! Make sure right table is right in comparison clause.", highlight_argument(&target_col_name)))?;
 
-        println!(
+        log_debug(&format!(
             "Found {} at index {} in left and {} at index {} in right.",
             col_name, col_index, target_col_name, target_col_index
-        );
+        ));
 
         Ok((col_index, target_col_index))
     }
@@ -929,16 +930,7 @@ impl SqlExecutor {
                     }
                 }
 
-                println!(
-                    "{}",
-                    system_message(
-                        "sorter",
-                        format!(
-                            "Sorting data by order: {}",
-                            highlight_argument(format!("{:?}", sort_index).as_str())
-                        )
-                    )
-                );
+                log_debug(&format!("Sorting data by order: {:?}", sort_index));
 
                 let table_reader = query_result.table.unwrap();
                 let table_reader_rows = table_reader.count_rows();
@@ -1002,17 +994,10 @@ impl SqlExecutor {
             }
         }
 
-        println!(
-            "{}",
-            system_message(
-                "limoft",
-                format!(
-                    "Selecting {} rows from row {} onwards.",
-                    highlight_argument(format!("{:?}", row_limit).as_str()),
-                    highlight_argument(format!("{:?}", row_offset).as_str())
-                )
-            )
-        );
+        log_debug(&format!(
+            "Selecting {:?} rows from row {:?} onwards.",
+            row_limit, row_offset
+        ));
 
         let old_table_reader = query_result.table.unwrap();
         let new_table_reader = old_table_reader.offset(row_offset)?.limit(row_limit)?;
@@ -1176,7 +1161,7 @@ impl SqlExecutor {
                     }
                 }
             }
-            println!("Found {} matches for row in left.", matches);
+            log_debug(&format!("Found {} matches for row in left.", matches));
         }
 
         // Create Reader from New Schema and Data
@@ -1209,21 +1194,15 @@ impl SqlExecutor {
                         ))?;
                         let table_name = self._extract_table_name(&table_with_joins.relation)?;
 
-                        println!(
-                            "{}",
-                            system_message(
-                                "exctr",
-                                format!(
-                                    "Selecting {} in table {}.",
-                                    column_names
-                                        .iter()
-                                        .map(|sel_col| format!("{}", sel_col))
-                                        .collect::<Vec<String>>()
-                                        .join(", "),
-                                    table_name
-                                ),
-                            )
-                        );
+                        log_debug(&format!(
+                            "Selecting {} in table {}.",
+                            column_names
+                                .iter()
+                                .map(|sel_col| format!("{}", sel_col))
+                                .collect::<Vec<String>>()
+                                .join(", "),
+                            table_name
+                        ));
 
                         // database.get_table()
                         // table.reader().scan()
@@ -1309,7 +1288,7 @@ impl SqlExecutor {
                                     }
 
                                     if sclrs.len() > 0 {
-                                        println!("Performing {} scalars", sclrs.len());
+                                        log_debug(&format!("Performing {} scalars.", sclrs.len()));
                                         result_table = result_table.perform_function(&sclrs)?;
                                     }
 
@@ -1395,11 +1374,14 @@ impl SqlExecutor {
                 let table_names = database.get_table_names();
 
                 if table_names.is_empty() {
-                    println!("There are no tables in this database.");
+                    log_info("There are no tables in this database.");
                 } else {
-                    println!("There are {} tables in this database.", table_names.len());
+                    log_info(&format!(
+                        "There are {} tables in this database.",
+                        table_names.len()
+                    ));
                     for (index, table_name) in table_names.iter().enumerate() {
-                        println!("{:5}. {:10}", index + 1, table_name);
+                        log_info(&format!("{:5}. {:10}", index + 1, table_name));
                     }
                 }
 
@@ -1599,14 +1581,14 @@ impl SqlExecutor {
                 let database_names = session.get_available_databases();
 
                 if database_names.is_empty() {
-                    println!("There are no databases in the registry yet.");
+                    log_info("There are no databases in the registry yet.");
                 } else {
-                    println!(
+                    log_info(&format!(
                         "There are {} databases in the registry.",
                         database_names.len()
-                    );
+                    ));
                     for (index, table_name) in database_names.iter().enumerate() {
-                        println!("{:5}. {:10}", index + 1, table_name);
+                        log_info(&format!("{:5}. {:10}", index + 1, table_name));
                     }
                 }
 

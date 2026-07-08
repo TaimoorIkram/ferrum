@@ -34,7 +34,7 @@ use std::{
 
 use chrono::{DateTime, Local};
 
-use crate::persistence::{Database, DatabaseRegistry};
+use crate::{logging::log_info, persistence::{Database, DatabaseRegistry}};
 
 struct CommandHistory {
     command: String,
@@ -113,7 +113,7 @@ impl Session {
 
         for (index, command) in self.command_history.iter().rev().enumerate() {
             if index < limit {
-                println!("{:3} | {}", index, command);
+                log_info(&format!("{:3} | {}", index, command));
             }
         }
     }

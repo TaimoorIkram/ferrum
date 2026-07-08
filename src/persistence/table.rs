@@ -3,6 +3,7 @@ use serde::{Deserialize, Serialize};
 
 use crate::cli::{FunctionArg, SelectColumn};
 use crate::functions::{aggregators, scalars};
+use crate::logging::{log_debug, log_error};
 
 use super::index::{ForeignKeyConstraint, Index, Key};
 use super::row::Row;
@@ -126,6 +127,10 @@ impl Table {
         if item.is_empty() && col_info.nullable {
             return Ok(None);
         } else if item.is_empty() && !col_info.nullable {
+            log_error(&format!(
+                "Column '{}.{}' does not allow NULL.",
+                self.name, col_name
+            ));
             return Err(format!(
                 "invalid NULL: empty strings not allowed on columm '{}'",
                 col_name
@@ -134,6 +139,10 @@ impl Table {
             match col_info.datatype {
                 DataType::Number => {
                     if item.parse::<u64>().is_err() {
+                        log_error(&format!(
+                            "Value '{}' not allowed on column '{}.{}' which is of {} tyoe.",
+                            item, self.name, col_name, col_info.datatype
+                        ));
                         return Err(format!(
                             "invalid {}: value not allowed on column '{}' ({})",
                             item, col_name, col_info.datatype
@@ -143,6 +152,10 @@ impl Table {
                 DataType::Text => {
                     if let Some(max_limit) = col_info.max_limit {
                         if item.len() > max_limit {
+                            log_error(&format!(
+                                "Value '{}' not allowed on column '{}.{}' which is of {} tyoe.",
+                                item, self.name, col_name, col_info.datatype
+                            ));
                             return Err(format!(
                                 "invalid {}: value not allowed on column '{}' ({})",
                                 item, col_name, col_info.datatype
@@ -162,6 +175,12 @@ impl Table {
 
         let schema = self.schema.read().unwrap();
         if data.len() != schema.len() {
+            log_error(&format!(
+                "Table '{}' has {} column(s), but only {} were provided.",
+                self.name,
+                schema.len(),
+                data.len(),
+            ));
             return Err(format!(
                 "invalid data: schema has {} column(s), but {} were provided",
                 schema.len(),
@@ -191,6 +210,10 @@ impl Table {
         // Get the name of the column making sure it is not a keyword
         if let Some(col_name) = col_def_vec.pop_front() {
             if vec!["pk", "fk", "num", "txt"].contains(&col_name) {
+                log_error(&format!(
+                    "The column name '{}' is a keyword which is not allowed as a column name.",
+                    col_name
+                ));
                 return Err(format!(
                     "invalid input {}: keywords not allowed as column names",
                     col_name
@@ -206,10 +229,14 @@ impl Table {
                 "num" => datatype = Some(DataType::Number),
                 "txt" => datatype = Some(DataType::Text),
                 _ => {
+                    let col_name = column.unwrap();
+                    log_error(&format!(
+                        "The datatype {} is not supported on column '{}'.",
+                        col_type, col_name
+                    ));
                     return Err(format!(
                         "invalid datatype {}: not supported, on column {}",
-                        col_type,
-                        column.unwrap()
+                        col_type, col_name
                     ));
                 }
             }
@@ -236,10 +263,17 @@ impl Table {
                             fk_ref_args.pop_front().unwrap(),
                         ))
                     } else {
+                        log_error(&format!("Check your foreign key argument again."));
                         return Err(format!("invalid reference: check your fk argument again"));
                     }
                 }
-                _ => return Err(format!("invalid key type {}: expected pk or fk", col_key)),
+                _ => {
+                    log_error(&format!(
+                        "The key type '{}' is neither one of 'pk' or 'fk'.",
+                        col_key
+                    ));
+                    return Err(format!("invalid key type {}: expected pk or fk", col_key));
+                }
             }
         }
 
@@ -255,6 +289,10 @@ impl Table {
         }
 
         if values.len() == 0 && self.primary_key_columns.len() != 0 {
+            log_error(&format!(
+                "Failed to index table {} because the columns are unreadable.",
+                self.name
+            ));
             return Err("err: failed to index: unable to read columns".to_string());
         }
 
@@ -295,12 +333,18 @@ impl Table {
     fn _validate_pk(&self, pk: &Vec<&str>) -> Result<(), String> {
         let key_components = self.primary_key_columns.len();
         if self.is_indexed && pk.len() != key_components {
+            log_error(&format!(
+                "Expected {} key arguments but {} were provided.",
+                key_components,
+                pk.len()
+            ));
             Err(format!(
                 "err: invalid key arguments: {} expected, {} provided",
                 key_components,
                 pk.len()
             ))
         } else if pk.len() == 0 {
+            log_error("Need a key for non-indexed search.");
             Err(format!("err: need a key for non-indexed search"))
         } else {
             Ok(())
@@ -318,6 +362,7 @@ impl Table {
         //! Returns an owned [Table] object.
 
         if columns.len() == 0 {
+            log_error("Unable to create a table because no columns were provided.");
             return Err(String::from(
                 "invalid arguments: 0 arguments does not make a schema",
             ));
@@ -528,7 +573,10 @@ impl Table {
 
                 Ok(deleted_row)
             }
-            None => Err("err: invalid key; no match for this index".to_string()),
+            None => {
+                log_error("Unable to match key with an entry in the index.");
+                Err("err: invalid key; no match for this index".to_string())
+            }
         }
     }
 
@@ -733,7 +781,7 @@ impl TableReader {
         let mut schema = self.schema.write().unwrap();
         let mut rows = self.rows.write().unwrap();
 
-        println!("Adding {} to result row.", value);
+        log_debug(&format!("Adding {} to result row.", value));
 
         schema.get_vec_mut().push((col_name, col_info));
 
@@ -950,6 +998,7 @@ impl TableReader {
                     match arg {
                         FunctionArg::Wildcard => {
                             // Process the command for all columns, no distinction
+                            log_error("Wildcards are not allowed inside scalar function calls.");
                             return Err(format!(
                                 "Invalid {}; wildcard not allowed inside scalars.",
                                 name

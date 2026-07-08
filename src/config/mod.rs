@@ -3,6 +3,8 @@ use std::env;
 
 pub struct EngineConfig {
     pub registry_file_path: String,
+    pub log_file_path: String,
+    pub debug_mode: bool,
 }
 
 impl EngineConfig {
@@ -15,6 +17,9 @@ impl EngineConfig {
 
         EngineConfig {
             registry_file_path: get("FERRUM_REGISTRY_FILE"),
+            log_file_path: get("FERRUM_LOG_FILE"),
+            debug_mode: get("FERRUM_DEBUG_MODE").eq("true"),
+
         }
     }
 }
