@@ -6,3 +6,4 @@ pub mod logging;
 
 mod functions;
 mod serialization;
+mod errors;
